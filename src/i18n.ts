@@ -36,8 +36,16 @@ const resources = {
       },
       payment: { upi: 'यूपीआय', cash: 'रोख', bank: 'बँक ट्रान्सफर', cheque: 'धनादेश' },
       history: {
-        title: 'अलीकडील नोंदी', records: '{{count}} नोंदी', empty: 'अजून कोणतीही पावती जतन केलेली नाही.',
-        excel: 'Excel डाउनलोड',
+        title: 'अलीकडील नोंदी', records: '{{count}} नोंदी दाखवत आहे', empty: 'अजून कोणतीही पावती जतन केलेली नाही.',
+        excel: 'Excel डाउनलोड', loading: 'नोंदी मिळवत आहे…', previous: 'मागील', next: 'पुढील',
+        page: 'पृष्ठ {{page}}', pagination: 'पावती नोंदींची पृष्ठे',
+      },
+      record: {
+        view: 'पहा', download: 'PDF डाउनलोड', viewReceipt: 'पावती {{number}} पहा',
+        downloadReceipt: 'पावती {{number}} PDF डाउनलोड करा', downloadError: 'पावती PDF डाउनलोड करता आली नाही. पुन्हा प्रयत्न करा.',
+        details: 'पावती तपशील', close: 'बंद करा', name: 'नाव', mobile: 'मोबाईल नं.', paymentType: 'पेमेंट प्रकार',
+        paymentDate: 'पेमेंट दिनांक', amount: 'एकूण रक्कम', reference: 'व्यवहार क्रमांक', amountWords: 'अक्षरी रक्कम',
+        createdBy: 'नोंद करणारे', createdAt: 'नोंद दिनांक',
       },
       preview: { step: '02', title: 'पावती पूर्वदृश्य' },
       receipt: {
@@ -48,7 +56,8 @@ const resources = {
       },
       export: {
         title: 'Excel नोंदवही डाउनलोड', copy: 'पावती क्रमांकाची सुरुवात आणि शेवट निवडा.',
-        financialYear: 'आर्थिक वर्ष', from: 'सुरुवातीची पावती', to: 'शेवटची पावती',
+        financialYear: 'आर्थिक वर्ष', range: 'पावती रेंज', rangeHelp: 'सर्व किंवा ठराविक पावत्या निवडा', all: 'सर्व पावत्या',
+        from: 'येथून', to: 'येथपर्यंत', start: 'सुरुवातीपासून', tillEnd: 'शेवटपर्यंत',
         selected: '{{count}} पावत्या निवडल्या', total: 'एकूण रक्कम: ₹ {{amount}}',
         download: 'Excel डाउनलोड करा', downloading: 'Excel तयार होत आहे…', cancel: 'रद्द करा',
         loading: 'नोंदी मिळवत आहे…', noRecords: 'या आर्थिक वर्षात नोंदी उपलब्ध नाहीत.',
@@ -90,7 +99,18 @@ const resources = {
         saveDownload: 'Save receipt and download PDF', saving: 'Saving…', saved: 'Receipt saved',
       },
       payment: { upi: 'UPI', cash: 'Cash', bank: 'Bank transfer', cheque: 'Cheque' },
-      history: { title: 'Recent records', records: '{{count}} records', empty: 'No receipts have been saved yet.', excel: 'Download Excel' },
+      history: {
+        title: 'Recent records', records: 'Showing {{count}} records', empty: 'No receipts have been saved yet.',
+        excel: 'Download Excel', loading: 'Loading records…', previous: 'Previous', next: 'Next',
+        page: 'Page {{page}}', pagination: 'Receipt record pages',
+      },
+      record: {
+        view: 'View', download: 'Download PDF', viewReceipt: 'View receipt {{number}}',
+        downloadReceipt: 'Download receipt {{number}} as PDF', downloadError: 'The receipt PDF could not be downloaded. Please try again.',
+        details: 'Receipt details', close: 'Close', name: 'Name', mobile: 'Mobile number', paymentType: 'Payment type',
+        paymentDate: 'Payment date', amount: 'Total amount', reference: 'Transaction reference', amountWords: 'Amount in words',
+        createdBy: 'Created by', createdAt: 'Created at',
+      },
       preview: { step: '02', title: 'Receipt preview' },
       receipt: {
         number: 'Receipt No.', title: 'RECEIPT', date: 'Date', name: 'Name:', mobile: 'Mobile No.:',
@@ -99,8 +119,9 @@ const resources = {
         computerNote: 'This is a computer-generated receipt. No signature is required.',
       },
       export: {
-        title: 'Download Excel register', copy: 'Select the starting and ending receipt numbers.', financialYear: 'Financial year',
-        from: 'From receipt', to: 'To receipt', selected: '{{count}} receipts selected', total: 'Total amount: ₹ {{amount}}',
+        title: 'Download Excel register', copy: 'Choose all receipts or a simple receipt range.', financialYear: 'Financial year',
+        range: 'Receipt range', rangeHelp: 'Choose all or select exact receipts', all: 'All receipts',
+        from: 'From', to: 'To', start: 'Start', tillEnd: 'Till end', selected: '{{count}} receipts selected', total: 'Total amount: ₹ {{amount}}',
         download: 'Download Excel', downloading: 'Creating Excel…', cancel: 'Cancel', loading: 'Loading records…',
         noRecords: 'No records are available for this financial year.', invalidRange: 'Select a valid receipt-number range.',
         downloadSuccess: 'Excel downloaded successfully.',
@@ -137,4 +158,3 @@ if (!i18n.isInitialized) {
 }
 
 export default i18n
-

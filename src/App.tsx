@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import type { User } from 'firebase/auth'
 import { useTranslation } from 'react-i18next'
@@ -11,10 +11,10 @@ import {
   getAllReceipts,
   getFinancialYear,
   getNextReceiptNumber,
+  getReceiptPage,
   loginOperator,
   logoutOperator,
   observeAuth,
-  observeRecentReceipts,
   reserveReceiptNumber,
   saveReceipt,
   type PaymentType,
@@ -32,6 +32,9 @@ type ReceiptForm = {
 }
 
 type FormErrors = Partial<Record<keyof ReceiptForm, string>>
+
+const EXPORT_RANGE_START = 0
+const EXPORT_RANGE_END = Number.MAX_SAFE_INTEGER
 
 const marathiNumbers = [
   'शून्य',
@@ -231,6 +234,14 @@ function formatReceiptDate(value: string) {
   return `${day}/${month}/${year}`
 }
 
+function formatRecordTimestamp(value: number, language: AppLanguage) {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat(language === 'mr' ? 'mr-IN' : 'en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value))
+}
+
 function formatAmount(value: string) {
   const amount = Number(value)
   if (!Number.isFinite(amount)) return '₹ 0'
@@ -256,6 +267,86 @@ function firebaseErrorMessage(error: unknown, translate: (key: string) => string
     return translate('errors.permission')
   }
   return translate('errors.generic')
+}
+
+type ReceiptDocumentProps = {
+  receiptNumber: string
+  name: string
+  mobile: string
+  paymentTypeLabel: string
+  paymentDate: string
+  amount: string | number
+  reference: string
+  amountInWords: string
+}
+
+const ReceiptDocument = forwardRef<HTMLElement, ReceiptDocumentProps>(function ReceiptDocument({
+  receiptNumber,
+  name,
+  mobile,
+  paymentTypeLabel,
+  paymentDate,
+  amount,
+  reference,
+  amountInWords,
+}, ref) {
+  const { t } = useTranslation()
+  return (
+    <article className="receipt-page" ref={ref}>
+      <img className="receipt-background" src={receiptTemplate} alt="Om Sainath Seva Mandal receipt template" />
+      <div className="receipt-content">
+        <div className="receipt-title-row">
+          <div className="receipt-meta"><span>{t('receipt.number')}</span><strong>{receiptNumber || '—'}</strong></div>
+          <h3>{t('receipt.title')}</h3>
+          <div className="receipt-meta receipt-meta-right"><span>{t('receipt.date')}</span><strong>{formatReceiptDate(paymentDate)}</strong></div>
+        </div>
+        <div className="receipt-table">
+          <div className="receipt-row receipt-row-full"><span>{t('receipt.name')}</span><strong>{name || '—'}</strong></div>
+          <div className="receipt-row receipt-row-full"><span>{t('receipt.mobile')}</span><strong>{mobile || '—'}</strong></div>
+          <div className="receipt-row receipt-row-split">
+            <div><span>{t('receipt.paymentType')}</span><strong>{paymentTypeLabel}</strong></div>
+            <div className="receipt-amount"><span>{t('receipt.totalAmount')}</span><strong>{formatAmount(String(amount))}</strong></div>
+          </div>
+          <div className="receipt-row receipt-row-split">
+            <div><span>{t('receipt.paymentDate')}</span><strong>{formatReceiptDate(paymentDate)}</strong></div>
+            <div className="receipt-reference"><span>{t('receipt.reference')}</span><strong>{reference || '—'}</strong></div>
+          </div>
+          <div className="receipt-row receipt-row-full receipt-words"><span>{t('receipt.amountWords')}</span><strong>{amountInWords}</strong></div>
+        </div>
+        <p className="computer-note">{t('receipt.computerNote')}</p>
+      </div>
+    </article>
+  )
+})
+
+async function createReceiptPdf(element: HTMLElement) {
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ])
+  await document.fonts.ready
+  const images = Array.from(element.querySelectorAll('img'))
+  await Promise.all(
+    images.map((image) =>
+      image.complete
+        ? Promise.resolve()
+        : new Promise<void>((resolve, reject) => {
+            image.onload = () => resolve()
+            image.onerror = () => reject(new Error('Template image failed to load.'))
+          }),
+    ),
+  )
+
+  const canvas = await html2canvas(element, {
+    scale: 3,
+    useCORS: true,
+    backgroundColor: '#fffdf7',
+    logging: false,
+    imageTimeout: 20_000,
+  })
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
+  pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, 210, 297)
+  return pdf
 }
 
 function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void }) {
@@ -286,6 +377,7 @@ function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void
 function App() {
   const { t, i18n } = useTranslation()
   const receiptRef = useRef<HTMLElement>(null)
+  const savedReceiptRef = useRef<HTMLElement>(null)
   const financialYear = useMemo(() => getFinancialYear(), [])
   const language = ((i18n.resolvedLanguage ?? i18n.language).split('-')[0] === 'en' ? 'en' : 'mr') as AppLanguage
   const [form, setForm] = useState<ReceiptForm>(() => ({
@@ -310,12 +402,21 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [recentReceipts, setRecentReceipts] = useState<ReceiptRecord[]>([])
   const [historyError, setHistoryError] = useState('')
+  const [historyPage, setHistoryPage] = useState(1)
+  const [historyCursors, setHistoryCursors] = useState<Array<string | undefined>>([undefined])
+  const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null)
+  const [historyHasNextPage, setHistoryHasNextPage] = useState(false)
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
+  const [viewReceipt, setViewReceipt] = useState<ReceiptRecord | null>(null)
+  const [receiptForDownload, setReceiptForDownload] = useState<ReceiptRecord | null>(null)
+  const [recordDownloadId, setRecordDownloadId] = useState<string | null>(null)
+  const [recordDownloadError, setRecordDownloadError] = useState('')
   const [receiptSaved, setReceiptSaved] = useState(false)
   const [showExcelExport, setShowExcelExport] = useState(false)
   const [allReceipts, setAllReceipts] = useState<ReceiptRecord[]>([])
   const [exportYear, setExportYear] = useState(financialYear)
-  const [fromSequence, setFromSequence] = useState(0)
-  const [toSequence, setToSequence] = useState(0)
+  const [fromSequence, setFromSequence] = useState(EXPORT_RANGE_START)
+  const [toSequence, setToSequence] = useState(EXPORT_RANGE_END)
   const [isExcelLoading, setIsExcelLoading] = useState(false)
   const [isExcelDownloading, setIsExcelDownloading] = useState(false)
   const [excelMessage, setExcelMessage] = useState('')
@@ -368,26 +469,79 @@ function App() {
 
   useEffect(() => observeAuth((user) => {
     setAuthUser(user)
-    if (!user) setRecentReceipts([])
+    if (!user) {
+      setRecentReceipts([])
+      setHistoryPage(1)
+      setHistoryCursors([undefined])
+      setHistoryNextCursor(null)
+      setHistoryHasNextPage(false)
+    }
     setAuthReady(true)
   }), [])
+
+  const loadHistoryPage = useCallback(async (page: number, cursor?: string) => {
+    setIsHistoryLoading(true)
+    setHistoryError('')
+    try {
+      const result = await getReceiptPage(financialYear, cursor, 5)
+      setRecentReceipts(result.receipts)
+      setHistoryPage(page)
+      setHistoryNextCursor(result.nextCursor)
+      setHistoryHasNextPage(result.hasNextPage)
+    } catch (error) {
+      console.error(error)
+      setHistoryError(firebaseErrorMessage(error, (key) => t(key)))
+    } finally {
+      setIsHistoryLoading(false)
+    }
+  }, [financialYear, t])
 
   useEffect(() => {
     if (!authUser) return
 
     const refreshTimer = window.setTimeout(() => void refreshNextReceiptNumber(), 0)
-    const stopObserving = observeRecentReceipts(
-      setRecentReceipts,
-      (error) => {
-        console.error(error)
-        setHistoryError(firebaseErrorMessage(error, (key) => t(key)))
-      },
-    )
+    const historyTimer = window.setTimeout(() => void loadHistoryPage(1), 0)
     return () => {
       window.clearTimeout(refreshTimer)
-      stopObserving()
+      window.clearTimeout(historyTimer)
     }
-  }, [authUser, refreshNextReceiptNumber, t])
+  }, [authUser, loadHistoryPage, refreshNextReceiptNumber])
+
+  const showPreviousHistoryPage = () => {
+    if (historyPage <= 1 || isHistoryLoading) return
+    const previousPage = historyPage - 1
+    void loadHistoryPage(previousPage, historyCursors[previousPage - 1])
+  }
+
+  const showNextHistoryPage = () => {
+    if (!historyHasNextPage || !historyNextCursor || isHistoryLoading) return
+    const nextPage = historyPage + 1
+    setHistoryCursors((current) => {
+      const updated = current.slice(0, historyPage)
+      updated[historyPage] = historyNextCursor
+      return updated
+    })
+    void loadHistoryPage(nextPage, historyNextCursor)
+  }
+
+  const downloadSavedReceipt = async (receipt: ReceiptRecord) => {
+    setRecordDownloadId(receipt.id)
+    setRecordDownloadError('')
+    try {
+      flushSync(() => setReceiptForDownload(receipt))
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      if (!savedReceiptRef.current) throw new Error('SAVED_RECEIPT_RENDER_FAILED')
+      const pdf = await createReceiptPdf(savedReceiptRef.current)
+      const safeNumber = receipt.receiptNumber.replace(/[^a-zA-Z0-9-]/g, '-')
+      pdf.save(`receipt-${safeNumber}.pdf`)
+    } catch (error) {
+      console.error(error)
+      setRecordDownloadError(t('record.downloadError'))
+    } finally {
+      setReceiptForDownload(null)
+      setRecordDownloadId(null)
+    }
+  }
 
   const updateField = <K extends keyof ReceiptForm>(field: K, value: ReceiptForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }))
@@ -456,37 +610,7 @@ function App() {
       })
 
       setStatus(t('status.pdf'))
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import('html2canvas'),
-        import('jspdf'),
-      ])
-      await document.fonts.ready
-      const images = Array.from(receiptRef.current.querySelectorAll('img'))
-      await Promise.all(
-        images.map((image) =>
-          image.complete
-            ? Promise.resolve()
-            : new Promise<void>((resolve, reject) => {
-                image.onload = () => resolve()
-                image.onerror = () => reject(new Error('Template image failed to load.'))
-              }),
-        ),
-      )
-
-      const canvas = await html2canvas(receiptRef.current, {
-        scale: 3,
-        useCORS: true,
-        backgroundColor: '#fffdf7',
-        logging: false,
-        imageTimeout: 20_000,
-      })
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4',
-        compress: true,
-      })
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, 210, 297)
+      const pdf = await createReceiptPdf(receiptRef.current)
 
       setStatus(t('status.database'))
       await saveReceipt({
@@ -503,6 +627,9 @@ function App() {
         createdBy: authUser.uid,
         createdByName: 'Mangesh',
       })
+
+      setHistoryCursors([undefined])
+      void loadHistoryPage(1)
 
       const safeNumber = reserved.receiptNumber.replace(/[^a-zA-Z0-9-]/g, '-')
       pdf.save(`receipt-${safeNumber}.pdf`)
@@ -533,11 +660,10 @@ function App() {
     void refreshNextReceiptNumber()
   }
 
-  const setExportYearAndRange = (year: string, receipts = allReceipts) => {
-    const available = receipts.filter((receipt) => receipt.financialYear === year).sort((a, b) => a.sequence - b.sequence)
+  const setExportYearAndRange = (year: string) => {
     setExportYear(year)
-    setFromSequence(available[0]?.sequence ?? 0)
-    setToSequence(available.at(-1)?.sequence ?? 0)
+    setFromSequence(EXPORT_RANGE_START)
+    setToSequence(EXPORT_RANGE_END)
     setExcelMessage('')
   }
 
@@ -550,7 +676,7 @@ function App() {
       setAllReceipts(receipts)
       const years = Array.from(new Set(receipts.map((receipt) => receipt.financialYear))).sort().reverse()
       const defaultYear = years.includes(financialYear) ? financialYear : (years[0] ?? financialYear)
-      setExportYearAndRange(defaultYear, receipts)
+      setExportYearAndRange(defaultYear)
     } catch (error) {
       console.error(error)
       setExcelMessage(firebaseErrorMessage(error, (key) => t(key)))
@@ -698,16 +824,32 @@ function App() {
               <div><span className="step-badge">DB</span><h2>{t('history.title')}</h2></div>
               <div className="history-actions"><span>{t('history.records', { count: recentReceipts.length })}</span><button type="button" onClick={() => void openExcelExport()}>{t('history.excel')}</button></div>
             </div>
-            {historyError ? <p className="history-empty history-error">{historyError}</p> : recentReceipts.length === 0 ? (
+            {isHistoryLoading ? <p className="history-empty">{t('history.loading')}</p> : historyError ? <p className="history-empty history-error">{historyError}</p> : recentReceipts.length === 0 ? (
               <p className="history-empty">{t('history.empty')}</p>
             ) : (
-              <div className="history-list">
-                {recentReceipts.map((receipt) => (
-                  <article className="history-item" key={receipt.id}>
-                    <div><strong>{receipt.name}</strong><span>{receipt.receiptNumber}</span></div>
-                    <div><strong>₹ {Number(receipt.amount).toLocaleString('en-IN')}</strong><span>{formatReceiptDate(receipt.paymentDate)}</span></div>
-                  </article>
-                ))}
+              <div className="history-results">
+                <div className="history-list">
+                  {recentReceipts.map((receipt) => (
+                    <article className="history-item" key={receipt.id}>
+                      <div className="history-item-person"><strong>{receipt.name}</strong><span>{receipt.receiptNumber}</span></div>
+                      <div className="history-item-amount"><strong>₹ {Number(receipt.amount).toLocaleString('en-IN')}</strong><span>{formatReceiptDate(receipt.paymentDate)}</span></div>
+                      <div className="history-row-actions">
+                        <button type="button" onClick={() => setViewReceipt(receipt)} aria-label={t('record.viewReceipt', { number: receipt.receiptNumber })} title={t('record.view')}>
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.75" /></svg>
+                        </button>
+                        <button type="button" onClick={() => void downloadSavedReceipt(receipt)} disabled={recordDownloadId !== null} aria-label={t('record.downloadReceipt', { number: receipt.receiptNumber })} title={t('record.download')}>
+                          {recordDownloadId === receipt.id ? <span className="button-spinner" /> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" /></svg>}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <nav className="history-pagination" aria-label={t('history.pagination')}>
+                  <button type="button" onClick={showPreviousHistoryPage} disabled={historyPage === 1 || isHistoryLoading}>{t('history.previous')}</button>
+                  <span>{t('history.page', { page: historyPage })}</span>
+                  <button type="button" onClick={showNextHistoryPage} disabled={!historyHasNextPage || isHistoryLoading}>{t('history.next')}</button>
+                </nav>
+                {recordDownloadError && <p className="record-message record-message-error" role="alert">{recordDownloadError}</p>}
               </div>
             )}
           </section>
@@ -719,33 +861,64 @@ function App() {
             <span className="a4-badge">A4 • PDF</span>
           </div>
           <div className="receipt-frame">
-            <article className="receipt-page" ref={receiptRef}>
-              <img className="receipt-background" src={receiptTemplate} alt="Om Sainath Seva Mandal receipt template" />
-              <div className="receipt-content">
-                <div className="receipt-title-row">
-                  <div className="receipt-meta"><span>{t('receipt.number')}</span><strong>{form.receiptNumber || '—'}</strong></div>
-                  <h3>{t('receipt.title')}</h3>
-                  <div className="receipt-meta receipt-meta-right"><span>{t('receipt.date')}</span><strong>{formatReceiptDate(form.paymentDate)}</strong></div>
-                </div>
-                <div className="receipt-table">
-                  <div className="receipt-row receipt-row-full"><span>{t('receipt.name')}</span><strong>{form.name || '—'}</strong></div>
-                  <div className="receipt-row receipt-row-full"><span>{t('receipt.mobile')}</span><strong>{form.mobile || '—'}</strong></div>
-                  <div className="receipt-row receipt-row-split">
-                    <div><span>{t('receipt.paymentType')}</span><strong>{paymentLabels[form.paymentType]}</strong></div>
-                    <div className="receipt-amount"><span>{t('receipt.totalAmount')}</span><strong>{formatAmount(form.amount)}</strong></div>
-                  </div>
-                  <div className="receipt-row receipt-row-split">
-                    <div><span>{t('receipt.paymentDate')}</span><strong>{formatReceiptDate(form.paymentDate)}</strong></div>
-                    <div className="receipt-reference"><span>{t('receipt.reference')}</span><strong>{form.reference || '—'}</strong></div>
-                  </div>
-                  <div className="receipt-row receipt-row-full receipt-words"><span>{t('receipt.amountWords')}</span><strong>{amountInWords}</strong></div>
-                </div>
-                <p className="computer-note">{t('receipt.computerNote')}</p>
-              </div>
-            </article>
+            <ReceiptDocument
+              ref={receiptRef}
+              receiptNumber={form.receiptNumber}
+              name={form.name}
+              mobile={form.mobile}
+              paymentTypeLabel={paymentLabels[form.paymentType]}
+              paymentDate={form.paymentDate}
+              amount={form.amount}
+              reference={form.reference}
+              amountInWords={amountInWords}
+            />
           </div>
         </section>
       </main>
+
+      {receiptForDownload && (
+        <div className="saved-receipt-render" aria-hidden="true">
+          <ReceiptDocument
+            ref={savedReceiptRef}
+            receiptNumber={receiptForDownload.receiptNumber}
+            name={receiptForDownload.name}
+            mobile={receiptForDownload.mobile}
+            paymentTypeLabel={paymentLabels[receiptForDownload.paymentType]}
+            paymentDate={receiptForDownload.paymentDate}
+            amount={receiptForDownload.amount}
+            reference={receiptForDownload.reference}
+            amountInWords={receiptForDownload.amountInWords}
+          />
+        </div>
+      )}
+
+      {viewReceipt && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setViewReceipt(null)}>
+          <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="view-receipt-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="record-modal-heading">
+              <div className="record-modal-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.75" /></svg>
+              </div>
+              <div><h2 id="view-receipt-title">{t('record.details')}</h2><p>{viewReceipt.receiptNumber}</p></div>
+              <button type="button" onClick={() => setViewReceipt(null)} aria-label={t('record.close')}>×</button>
+            </div>
+            <dl className="record-details-grid">
+              <div><dt>{t('record.name')}</dt><dd>{viewReceipt.name}</dd></div>
+              <div><dt>{t('record.mobile')}</dt><dd>{viewReceipt.mobile}</dd></div>
+              <div><dt>{t('record.paymentType')}</dt><dd>{paymentLabels[viewReceipt.paymentType]}</dd></div>
+              <div><dt>{t('record.paymentDate')}</dt><dd>{formatReceiptDate(viewReceipt.paymentDate)}</dd></div>
+              <div><dt>{t('record.amount')}</dt><dd>₹ {Number(viewReceipt.amount).toLocaleString('en-IN')}</dd></div>
+              <div><dt>{t('record.reference')}</dt><dd>{viewReceipt.reference || '—'}</dd></div>
+              <div className="record-detail-wide"><dt>{t('record.amountWords')}</dt><dd>{viewReceipt.amountInWords}</dd></div>
+              <div><dt>{t('record.createdBy')}</dt><dd>{viewReceipt.createdByName}</dd></div>
+              <div><dt>{t('record.createdAt')}</dt><dd>{formatRecordTimestamp(viewReceipt.createdAt, language)}</dd></div>
+            </dl>
+            <div className="record-modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setViewReceipt(null)}>{t('record.close')}</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {showExcelExport && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowExcelExport(false)}>
@@ -761,8 +934,12 @@ function App() {
               <>
                 <div className="excel-range-grid">
                   <label className="field field-wide"><span>{t('export.financialYear')}</span><select value={exportYear} onChange={(event) => setExportYearAndRange(event.target.value)}>{exportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
-                  <label className="field"><span>{t('export.from')}</span><select value={fromSequence} onChange={(event) => { setFromSequence(Number(event.target.value)); setExcelMessage('') }}>{exportYearReceipts.map((receipt) => <option key={receipt.id} value={receipt.sequence}>{receipt.receiptNumber} — {receipt.name}</option>)}</select></label>
-                  <label className="field"><span>{t('export.to')}</span><select value={toSequence} onChange={(event) => { setToSequence(Number(event.target.value)); setExcelMessage('') }}>{exportYearReceipts.map((receipt) => <option key={receipt.id} value={receipt.sequence}>{receipt.receiptNumber} — {receipt.name}</option>)}</select></label>
+                  <div className="excel-range-preset field-wide">
+                    <div><strong>{t('export.range')}</strong><span>{t('export.rangeHelp')}</span></div>
+                    <button type="button" className={fromSequence === EXPORT_RANGE_START && toSequence === EXPORT_RANGE_END ? 'active' : ''} onClick={() => { setFromSequence(EXPORT_RANGE_START); setToSequence(EXPORT_RANGE_END); setExcelMessage('') }}>{t('export.all')}</button>
+                  </div>
+                  <label className="field"><span>{t('export.from')}</span><select value={fromSequence} onChange={(event) => { setFromSequence(Number(event.target.value)); setExcelMessage('') }}><option value={EXPORT_RANGE_START}>{t('export.start')}</option>{exportYearReceipts.map((receipt) => <option key={receipt.id} value={receipt.sequence}>{receipt.receiptNumber}</option>)}</select></label>
+                  <label className="field"><span>{t('export.to')}</span><select value={toSequence} onChange={(event) => { setToSequence(Number(event.target.value)); setExcelMessage('') }}><option value={EXPORT_RANGE_END}>{t('export.tillEnd')}</option>{exportYearReceipts.map((receipt) => <option key={receipt.id} value={receipt.sequence}>{receipt.receiptNumber}</option>)}</select></label>
                 </div>
                 <div className="excel-summary"><span>{t('export.selected', { count: selectedExportReceipts.length })}</span><strong>{t('export.total', { amount: selectedExportTotal.toLocaleString('en-IN') })}</strong></div>
                 {excelMessage && <p className="excel-message" role="status">{excelMessage}</p>}

@@ -8,15 +8,15 @@ import {
 } from 'firebase/auth'
 import {
   get,
-  limitToLast,
-  onValue,
+  limitToFirst,
   orderByKey,
   push,
   query,
   ref,
   runTransaction,
   serverTimestamp,
-  set,
+  startAfter,
+  update,
 } from 'firebase/database'
 import { auth, database } from './firebase'
 
@@ -40,6 +40,12 @@ export type ReceiptRecord = {
 }
 
 export type NewReceiptRecord = Omit<ReceiptRecord, 'id' | 'createdAt'>
+
+export type ReceiptPage = {
+  receipts: ReceiptRecord[]
+  hasNextPage: boolean
+  nextCursor: string | null
+}
 
 const OPERATOR_ID = 'Mangesh'
 const OPERATOR_EMAIL = 'mangesh@thesamplebee.app'
@@ -98,34 +104,46 @@ export async function reserveReceiptNumber(financialYear: string) {
 
 export async function saveReceipt(record: NewReceiptRecord) {
   const receiptReference = push(ref(database, `${ROOT_PATH}/receipts`))
-  await set(receiptReference, {
-    ...record,
-    createdAt: serverTimestamp(),
+  const receiptId = receiptReference.key
+  if (!receiptId) throw new Error('RECEIPT_KEY_NOT_CREATED')
+
+  const sequenceKey = String(record.sequence).padStart(6, '0')
+  await update(ref(database), {
+    [`${ROOT_PATH}/receipts/${receiptId}`]: { ...record, createdAt: serverTimestamp() },
+    [`${ROOT_PATH}/receiptIndex/${record.financialYear}/${sequenceKey}`]: receiptId,
   })
   return receiptReference.key
 }
 
-export function observeRecentReceipts(
-  callback: (receipts: ReceiptRecord[]) => void,
-  onError: (error: Error) => void,
-) {
-  const recentQuery = query(
-    ref(database, `${ROOT_PATH}/receipts`),
-    orderByKey(),
-    limitToLast(8),
-  )
+export async function getReceiptPage(
+  financialYear: string,
+  afterSequenceKey?: string,
+  pageSize = 5,
+): Promise<ReceiptPage> {
+  const indexReference = ref(database, `${ROOT_PATH}/receiptIndex/${financialYear}`)
+  const constraints = afterSequenceKey
+    ? [orderByKey(), startAfter(afterSequenceKey), limitToFirst(pageSize + 1)]
+    : [orderByKey(), limitToFirst(pageSize + 1)]
+  const indexSnapshot = await get(query(indexReference, ...constraints))
+  const indexEntries: Array<{ sequenceKey: string; receiptId: string }> = []
 
-  return onValue(
-    recentQuery,
-    (snapshot) => {
-      const receipts: ReceiptRecord[] = []
-      snapshot.forEach((child) => {
-        receipts.push({ id: child.key ?? '', ...child.val() } as ReceiptRecord)
-      })
-      callback(receipts.reverse())
-    },
-    onError,
-  )
+  indexSnapshot.forEach((child) => {
+    indexEntries.push({ sequenceKey: child.key ?? '', receiptId: String(child.val()) })
+  })
+
+  const hasNextPage = indexEntries.length > pageSize
+  const pageEntries = indexEntries.slice(0, pageSize)
+  const pageReceipts = (await Promise.all(pageEntries.map(async ({ receiptId }) => {
+    const snapshot = await get(ref(database, `${ROOT_PATH}/receipts/${receiptId}`))
+    return snapshot.exists() ? { id: receiptId, ...snapshot.val() } as ReceiptRecord : null
+  }))).filter((receipt): receipt is ReceiptRecord => receipt !== null)
+  const nextCursor = pageEntries.at(-1)?.sequenceKey ?? null
+
+  return {
+    receipts: pageReceipts,
+    hasNextPage,
+    nextCursor,
+  }
 }
 
 export async function getAllReceipts() {
