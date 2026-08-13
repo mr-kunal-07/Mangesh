@@ -94,9 +94,11 @@ export async function buildReceiptWorkbook(receipts: ReceiptRecord[], language: 
     paperSize: 9,
     margins: { left: 0.25, right: 0.25, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
   }
-  worksheet.headerFooter.oddFooter = language === 'mr'
-    ? '&Lॐ साईनाथ सेवा मंडळ&Cपावती नोंदवही&RPage &P of &N'
-    : '&LOm Sainath Seva Mandal&CReceipt Register&RPage &P of &N'
+  worksheet.headerFooter = {
+    oddFooter: language === 'mr'
+      ? '&Lॐ साईनाथ सेवा मंडळ&Cपावती नोंदवही&RPage &P of &N'
+      : '&LOm Sainath Seva Mandal&CReceipt Register&RPage &P of &N',
+  }
   workbook.creator = 'Om Sainath Digital Receipt System'
   workbook.created = new Date()
   workbook.calcProperties.fullCalcOnLoad = true
@@ -123,4 +125,3 @@ export async function downloadReceiptWorkbook(
   anchor.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-
