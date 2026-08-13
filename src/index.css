@@ -45,6 +45,7 @@ button {
 .app-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 18px;
   padding: 22px clamp(20px, 4vw, 64px);
   color: #fff;
@@ -53,6 +54,45 @@ button {
     #742c13;
   border-bottom: 4px solid var(--orange);
   box-shadow: 0 10px 30px rgba(74, 27, 12, 0.16);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.language-switcher {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.language-switcher button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.7);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.language-switcher button.active {
+  color: #5e220e;
+  background: #ffe0ae;
+  box-shadow: 0 2px 8px rgba(48, 16, 4, 0.18);
 }
 
 .brand-mark {
@@ -98,6 +138,47 @@ button {
   font-size: 14px;
 }
 
+.operator-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.operator-actions span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffe0b2;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.operator-actions i,
+.firebase-note i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #53d68a;
+  box-shadow: 0 0 0 4px rgba(83, 214, 138, 0.12);
+}
+
+.operator-actions button {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 10px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.operator-actions button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(340px, 430px) minmax(520px, 1fr);
@@ -106,6 +187,14 @@ button {
   width: min(1540px, 100%);
   margin: 0 auto;
   padding: 28px clamp(18px, 3vw, 48px) 48px;
+}
+
+.left-column {
+  position: sticky;
+  top: 20px;
+  display: grid;
+  gap: 18px;
+  min-width: 0;
 }
 
 .form-panel,
@@ -117,9 +206,15 @@ button {
 }
 
 .form-panel {
-  position: sticky;
-  top: 20px;
   padding: 24px;
+}
+
+.history-panel {
+  padding: 20px;
+  border: 1px solid rgba(116, 44, 19, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 252, 248, 0.96);
+  box-shadow: 0 18px 50px rgba(78, 45, 27, 0.08);
 }
 
 .preview-panel {
@@ -242,6 +337,33 @@ button {
   border-color: #c74634;
 }
 
+.locked-input {
+  position: relative;
+}
+
+.locked-input input {
+  padding-right: 52px;
+  color: #5e3a27;
+  background: #f8f1e9;
+  font-weight: 700;
+}
+
+.locked-input > span {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  min-width: 30px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  transform: translateY(-50%);
+  color: #805039;
+  background: #ead9c9;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 9px;
+  font-weight: 800;
+  text-align: center;
+}
+
 .field em {
   color: #b33327;
   font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
@@ -335,6 +457,397 @@ button {
   font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
   font-size: 11px;
   text-align: center;
+}
+
+.status-success {
+  color: #24734a;
+  font-weight: 700;
+}
+
+.history-heading,
+.history-heading > div {
+  display: flex;
+  align-items: center;
+}
+
+.history-heading {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.history-heading > div {
+  gap: 9px;
+}
+
+.history-heading h2 {
+  margin: 0;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 17px;
+}
+
+.history-heading > span {
+  color: #8b7c73;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.history-actions {
+  justify-content: flex-end;
+}
+
+.history-actions > span {
+  color: #8b7c73;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.history-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d5b59f;
+  border-radius: 9px;
+  color: #6f2a12;
+  background: #fff6ec;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.history-actions button:hover:not(:disabled) {
+  border-color: #ba6a3b;
+  background: #ffecda;
+}
+
+.history-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 11px;
+  border: 1px solid #eadfd6;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.history-item > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.history-item > div:last-child {
+  align-items: flex-end;
+  flex: 0 0 auto;
+}
+
+.history-item strong {
+  overflow: hidden;
+  color: #3d2b22;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item span {
+  color: #8b7b72;
+  font-size: 9px;
+}
+
+.history-empty {
+  margin: 0;
+  padding: 18px 12px;
+  border: 1px dashed #decdbf;
+  border-radius: 11px;
+  color: #8a7a70;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 11px;
+  text-align: center;
+}
+
+.history-error {
+  color: #a63b2f;
+  background: #fff4f1;
+}
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - 110px);
+  padding: 32px 18px;
+}
+
+.login-card {
+  width: min(100%, 410px);
+  padding: 32px;
+  border: 1px solid rgba(116, 44, 19, 0.13);
+  border-radius: 22px;
+  background: rgba(255, 252, 248, 0.98);
+  box-shadow: 0 24px 70px rgba(78, 45, 27, 0.14);
+}
+
+.login-icon {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 17px;
+  border-radius: 16px;
+  color: #ffe2b4;
+  background: linear-gradient(145deg, #8f3d17, #5e1c09);
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 25px;
+  font-weight: 800;
+  box-shadow: 0 10px 25px rgba(98, 31, 11, 0.2);
+}
+
+.login-kicker,
+.login-card h2,
+.login-copy {
+  margin: 0;
+}
+
+.login-kicker {
+  color: var(--orange);
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.login-card h2 {
+  margin-top: 3px;
+  color: #33231b;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 26px;
+}
+
+.login-copy {
+  margin: 5px 0 22px;
+  color: #817269;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 12px;
+}
+
+.login-card .field + .field {
+  margin-top: 15px;
+}
+
+.login-error {
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  color: #a52f25;
+  background: #fff0ed;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 11px;
+}
+
+.login-button {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #8f3d17, #621f0b);
+  box-shadow: 0 10px 22px rgba(98, 31, 11, 0.2);
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-weight: 800;
+}
+
+.login-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.firebase-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  color: #8d7d74;
+  font-size: 10px;
+}
+
+.auth-loader {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #ead8ca;
+  border-top-color: var(--maroon);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(41, 22, 14, 0.64);
+  backdrop-filter: blur(5px);
+}
+
+.excel-modal {
+  width: min(100%, 620px);
+  max-height: min(760px, calc(100vh - 36px));
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid rgba(116, 44, 19, 0.18);
+  border-radius: 20px;
+  background: #fffaf5;
+  box-shadow: 0 28px 90px rgba(32, 14, 7, 0.34);
+}
+
+.excel-modal-heading {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 20px;
+}
+
+.excel-modal-heading h2,
+.excel-modal-heading p {
+  margin: 0;
+}
+
+.excel-modal-heading h2 {
+  color: #33231b;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 20px;
+}
+
+.excel-modal-heading p {
+  margin-top: 2px;
+  color: #85766d;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 11px;
+}
+
+.excel-modal-heading > button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #dfd0c5;
+  border-radius: 10px;
+  color: #7d6d64;
+  background: #fff;
+  font-size: 22px;
+}
+
+.excel-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  color: #fff;
+  background: #197346;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.excel-range-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px 12px;
+}
+
+.excel-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 17px;
+  padding: 13px 14px;
+  border: 1px solid #c9decf;
+  border-radius: 11px;
+  color: #285d3f;
+  background: #f0f8f3;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 12px;
+}
+
+.excel-summary strong {
+  font-size: 14px;
+}
+
+.excel-message {
+  margin: 10px 0 0;
+  color: #6d5d54;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 11px;
+  text-align: center;
+}
+
+.excel-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.secondary-button,
+.excel-download-button {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 11px;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.secondary-button {
+  border: 1px solid #d9cac0;
+  color: #6d5c53;
+  background: #fff;
+}
+
+.excel-download-button {
+  border: 0;
+  color: #fff;
+  background: #197346;
+  box-shadow: 0 8px 20px rgba(25, 115, 70, 0.22);
+}
+
+.excel-download-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.excel-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: #76675e;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .receipt-frame {
@@ -505,15 +1018,61 @@ button {
     width: min(860px, 100%);
   }
 
+  .left-column {
+    display: contents;
+  }
+
   .form-panel {
-    position: static;
+    order: 1;
+  }
+
+  .preview-panel {
+    order: 2;
+  }
+
+  .history-panel {
+    order: 3;
   }
 }
 
 @media (max-width: 600px) {
   .app-header {
     align-items: flex-start;
+    gap: 10px;
     padding: 18px;
+  }
+
+  .header-controls {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .language-switcher button {
+    min-height: 34px;
+    padding-inline: 9px;
+  }
+
+  .header-brand {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .operator-actions span {
+    display: none;
+  }
+
+  .operator-actions button {
+    min-height: 40px;
+    padding: 0 10px;
+  }
+
+  .app-header h1 {
+    font-size: 22px;
+  }
+
+  .eyebrow {
+    font-size: 10px;
   }
 
   .brand-mark {
@@ -532,9 +1091,26 @@ button {
   }
 
   .form-panel,
+  .history-panel,
   .preview-panel {
     padding: 18px 14px;
     border-radius: 16px;
+  }
+
+  .field input,
+  .field select {
+    min-height: 52px;
+    border-radius: 12px;
+    font-size: 16px;
+  }
+
+  .download-button {
+    position: sticky;
+    bottom: 10px;
+    z-index: 3;
+    min-height: 56px;
+    margin-top: 20px;
+    box-shadow: 0 12px 32px rgba(98, 31, 11, 0.34);
   }
 
   .form-grid {
@@ -552,6 +1128,80 @@ button {
   .receipt-frame {
     padding: 6px;
   }
+
+  .preview-panel {
+    overflow: hidden;
+  }
+
+  .history-item {
+    min-height: 58px;
+  }
+
+  .history-item strong {
+    font-size: 13px;
+  }
+
+  .history-heading {
+    align-items: flex-start;
+  }
+
+  .history-actions {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px !important;
+  }
+
+  .history-actions button {
+    min-height: 38px;
+  }
+
+  .excel-modal {
+    padding: 20px 15px;
+    border-radius: 16px;
+  }
+
+  .excel-range-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .excel-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+  }
+
+  .login-card {
+    padding: 25px 20px;
+  }
+}
+
+@media (max-width: 380px) {
+  .app-header {
+    padding: 14px 12px;
+  }
+
+  .brand-mark {
+    width: 42px;
+    height: 42px;
+  }
+
+  .app-header h1 {
+    font-size: 19px;
+  }
+
+  .workspace {
+    padding-inline: 8px;
+  }
+
+  .form-panel,
+  .history-panel,
+  .preview-panel {
+    padding-inline: 11px;
+  }
 }
 
 @media print {
@@ -561,6 +1211,7 @@ button {
 
   .app-header,
   .form-panel,
+  .history-panel,
   .preview-heading {
     display: none !important;
   }
@@ -584,4 +1235,39 @@ button {
     max-width: none;
     box-shadow: none;
   }
+}
+
+/* Medium-weight, rounded-md field system */
+.app-shell h1,
+.app-shell h2,
+.app-shell h3,
+.app-shell strong,
+.app-shell b,
+.app-shell .field > span,
+.app-shell .receipt-row span,
+.app-shell .step-badge,
+.app-shell .a4-badge,
+.app-shell .brand-mark,
+.app-shell .login-icon,
+.app-shell .excel-icon,
+.app-shell .locked-input > span,
+.app-shell .status-success {
+  font-weight: 600;
+}
+
+.app-shell button,
+.app-shell input,
+.app-shell select,
+.app-shell small,
+.app-shell .eyebrow,
+.app-shell .receipt-meta span,
+.app-shell .computer-note {
+  font-weight: 500;
+}
+
+.app-shell .field input,
+.app-shell .field select,
+.app-shell .locked-input input,
+.app-shell .amount-input input {
+  border-radius: 8px;
 }

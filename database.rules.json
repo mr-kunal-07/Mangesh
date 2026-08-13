@@ -1,0 +1,19 @@
+{
+  "rules": {
+    "receiptSystem": {
+      ".read": "auth != null && auth.uid === 'hkb9PQFVrLZcn9ECjhdpGOYPsWp2'",
+      ".write": "auth != null && auth.uid === 'hkb9PQFVrLZcn9ECjhdpGOYPsWp2'",
+      "counters": {
+        "$financialYear": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        }
+      },
+      "receipts": {
+        "$receiptId": {
+          ".validate": "newData.hasChildren(['receiptNumber', 'sequence', 'financialYear', 'name', 'mobile', 'paymentType', 'paymentDate', 'amount', 'amountInWords', 'createdAt', 'createdBy', 'createdByName'])"
+        }
+      }
+    }
+  }
+}
+

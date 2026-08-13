@@ -1,7 +1,25 @@
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { flushSync } from 'react-dom'
+import type { User } from 'firebase/auth'
+import { useTranslation } from 'react-i18next'
 import receiptTemplate from './assets/receipt-template.jpeg'
-
-type PaymentType = 'cash' | 'upi' | 'bank' | 'cheque'
+import LanguageSwitcher from './LanguageSwitcher'
+import type { AppLanguage } from './i18n'
+import { downloadReceiptWorkbook } from './excelExport'
+import {
+  formatReceiptNumber,
+  getAllReceipts,
+  getFinancialYear,
+  getNextReceiptNumber,
+  loginOperator,
+  logoutOperator,
+  observeAuth,
+  observeRecentReceipts,
+  reserveReceiptNumber,
+  saveReceipt,
+  type PaymentType,
+  type ReceiptRecord,
+} from './receiptService'
 
 type ReceiptForm = {
   receiptNumber: string
@@ -131,25 +149,10 @@ const hundredWords = [
   'नऊशे',
 ]
 
-const paymentLabels: Record<PaymentType, string> = {
-  cash: 'रोख',
-  upi: 'यूपीआय',
-  bank: 'बँक ट्रान्सफर',
-  cheque: 'धनादेश',
-}
-
 function todayForInput() {
   const today = new Date()
   const offset = today.getTimezoneOffset()
   return new Date(today.getTime() - offset * 60_000).toISOString().slice(0, 10)
-}
-
-function createReceiptNumber() {
-  const now = new Date()
-  const year = String(now.getFullYear()).slice(-2)
-  const nextYear = String(now.getFullYear() + 1).slice(-2)
-  const serial = String(now.getTime()).slice(-6)
-  return `OSM/${year}-${nextYear}/${serial}`
 }
 
 function numberBelowThousand(value: number) {
@@ -181,6 +184,47 @@ function numberToMarathiWords(value: number) {
   return `${words.join(' ')} रुपये फक्त`
 }
 
+const englishOnes = [
+  '', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+  'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
+  'seventeen', 'eighteen', 'nineteen',
+]
+const englishTens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+
+function englishBelowThousand(value: number) {
+  const words: string[] = []
+  if (value >= 100) {
+    words.push(`${englishOnes[Math.floor(value / 100)]} hundred`)
+    value %= 100
+  }
+  if (value >= 20) {
+    words.push(`${englishTens[Math.floor(value / 10)]}${value % 10 ? `-${englishOnes[value % 10]}` : ''}`)
+  } else if (value > 0) {
+    words.push(englishOnes[value])
+  }
+  return words.join(' ')
+}
+
+function numberToEnglishWords(value: number) {
+  const amount = Math.floor(value)
+  if (!Number.isFinite(amount) || amount < 0) return ''
+  if (amount === 0) return 'Zero Rupees Only'
+  if (amount > 999_999_999) return 'Amount exceeds supported limit'
+
+  const segments = [
+    { value: Math.floor(amount / 10_000_000), label: 'crore' },
+    { value: Math.floor((amount % 10_000_000) / 100_000), label: 'lakh' },
+    { value: Math.floor((amount % 100_000) / 1_000), label: 'thousand' },
+    { value: amount % 1_000, label: '' },
+  ]
+  const words = segments
+    .filter((segment) => segment.value > 0)
+    .map((segment) => `${englishBelowThousand(segment.value)}${segment.label ? ` ${segment.label}` : ''}`)
+    .join(' ')
+
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)} Rupees Only`
+}
+
 function formatReceiptDate(value: string) {
   if (!value) return '—'
   const [year, month, day] = value.split('-')
@@ -193,10 +237,59 @@ function formatAmount(value: string) {
   return `₹ ${amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
 }
 
+function firebaseErrorMessage(error: unknown, translate: (key: string) => string) {
+  const code =
+    typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
+  const message = error instanceof Error ? error.message : ''
+  const details = `${code} ${message}`.toLowerCase()
+
+  if (details.includes('invalid-credential') || details.includes('wrong-password')) {
+    return translate('errors.invalidLogin')
+  }
+  if (details.includes('too-many-requests')) {
+    return translate('errors.tooMany')
+  }
+  if (details.includes('network-request-failed')) {
+    return translate('errors.network')
+  }
+  if (details.includes('permission_denied') || details.includes('permission-denied')) {
+    return translate('errors.permission')
+  }
+  return translate('errors.generic')
+}
+
+function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <header className="app-header">
+      <div className="header-brand">
+        <div className="brand-mark" aria-hidden="true">ॐ</div>
+        <div>
+          <p className="eyebrow">{t('header.organization')}</p>
+          <h1>{t('header.title')}</h1>
+          <p className="header-subtitle">{t('header.subtitle')}</p>
+        </div>
+      </div>
+      <div className="header-controls">
+        <LanguageSwitcher />
+        {user && (
+          <div className="operator-actions">
+            <span><i aria-hidden="true" /> Mangesh</span>
+            <button type="button" onClick={onLogout}>{t('header.logout')}</button>
+          </div>
+        )}
+      </div>
+    </header>
+  )
+}
+
 function App() {
+  const { t, i18n } = useTranslation()
   const receiptRef = useRef<HTMLElement>(null)
+  const financialYear = useMemo(() => getFinancialYear(), [])
+  const language = ((i18n.resolvedLanguage ?? i18n.language).split('-')[0] === 'en' ? 'en' : 'mr') as AppLanguage
   const [form, setForm] = useState<ReceiptForm>(() => ({
-    receiptNumber: createReceiptNumber(),
+    receiptNumber: formatReceiptNumber(getFinancialYear(), 1),
     name: '',
     mobile: '',
     paymentType: 'upi',
@@ -206,42 +299,163 @@ function App() {
   }))
   const [errors, setErrors] = useState<FormErrors>({})
   const [isDownloading, setIsDownloading] = useState(false)
+  const [isNumberLoading, setIsNumberLoading] = useState(true)
+  const [databaseReady, setDatabaseReady] = useState(false)
   const [status, setStatus] = useState('')
+  const [authUser, setAuthUser] = useState<User | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [loginId, setLoginId] = useState('Mangesh')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const [recentReceipts, setRecentReceipts] = useState<ReceiptRecord[]>([])
+  const [historyError, setHistoryError] = useState('')
+  const [receiptSaved, setReceiptSaved] = useState(false)
+  const [showExcelExport, setShowExcelExport] = useState(false)
+  const [allReceipts, setAllReceipts] = useState<ReceiptRecord[]>([])
+  const [exportYear, setExportYear] = useState(financialYear)
+  const [fromSequence, setFromSequence] = useState(0)
+  const [toSequence, setToSequence] = useState(0)
+  const [isExcelLoading, setIsExcelLoading] = useState(false)
+  const [isExcelDownloading, setIsExcelDownloading] = useState(false)
+  const [excelMessage, setExcelMessage] = useState('')
 
   const amountInWords = useMemo(
-    () => numberToMarathiWords(Number(form.amount || 0)),
-    [form.amount],
+    () => language === 'en'
+      ? numberToEnglishWords(Number(form.amount || 0))
+      : numberToMarathiWords(Number(form.amount || 0)),
+    [form.amount, language],
+  )
+  const paymentLabels = useMemo<Record<PaymentType, string>>(() => ({
+    cash: t('payment.cash'), upi: t('payment.upi'), bank: t('payment.bank'), cheque: t('payment.cheque'),
+  }), [t])
+  const exportYears = useMemo(
+    () => Array.from(new Set(allReceipts.map((receipt) => receipt.financialYear))).sort().reverse(),
+    [allReceipts],
+  )
+  const exportYearReceipts = useMemo(
+    () => allReceipts.filter((receipt) => receipt.financialYear === exportYear).sort((a, b) => a.sequence - b.sequence),
+    [allReceipts, exportYear],
+  )
+  const selectedExportReceipts = useMemo(
+    () => exportYearReceipts.filter((receipt) => receipt.sequence >= fromSequence && receipt.sequence <= toSequence),
+    [exportYearReceipts, fromSequence, toSequence],
+  )
+  const selectedExportTotal = useMemo(
+    () => selectedExportReceipts.reduce((sum, receipt) => sum + Number(receipt.amount), 0),
+    [selectedExportReceipts],
   )
 
-  const updateField = (field: keyof ReceiptForm, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }))
-    if (errors[field]) {
-      setErrors((current) => ({ ...current, [field]: undefined }))
+  useEffect(() => {
+    document.title = `${t('header.title')} | ${t('header.organization')}`
+  }, [language, t])
+
+  const refreshNextReceiptNumber = useCallback(async () => {
+    setIsNumberLoading(true)
+    try {
+      const nextReceiptNumber = await getNextReceiptNumber(financialYear)
+      setForm((current) => ({ ...current, receiptNumber: nextReceiptNumber }))
+      setDatabaseReady(true)
+    } catch (error) {
+      console.error(error)
+      setDatabaseReady(false)
+      setForm((current) => ({ ...current, receiptNumber: '' }))
+      setStatus(firebaseErrorMessage(error, (key) => t(key)))
+    } finally {
+      setIsNumberLoading(false)
     }
+  }, [financialYear, t])
+
+  useEffect(() => observeAuth((user) => {
+    setAuthUser(user)
+    if (!user) setRecentReceipts([])
+    setAuthReady(true)
+  }), [])
+
+  useEffect(() => {
+    if (!authUser) return
+
+    const refreshTimer = window.setTimeout(() => void refreshNextReceiptNumber(), 0)
+    const stopObserving = observeRecentReceipts(
+      setRecentReceipts,
+      (error) => {
+        console.error(error)
+        setHistoryError(firebaseErrorMessage(error, (key) => t(key)))
+      },
+    )
+    return () => {
+      window.clearTimeout(refreshTimer)
+      stopObserving()
+    }
+  }, [authUser, refreshNextReceiptNumber, t])
+
+  const updateField = <K extends keyof ReceiptForm>(field: K, value: ReceiptForm[K]) => {
+    setForm((current) => ({ ...current, [field]: value }))
+    if (errors[field]) setErrors((current) => ({ ...current, [field]: undefined }))
+    setReceiptSaved(false)
     setStatus('')
   }
 
   const validate = () => {
     const nextErrors: FormErrors = {}
-    if (!form.receiptNumber.trim()) nextErrors.receiptNumber = 'पावती क्रमांक आवश्यक आहे.'
-    if (!form.name.trim()) nextErrors.name = 'नाव आवश्यक आहे.'
-    if (!/^\d{10}$/.test(form.mobile)) nextErrors.mobile = '१० अंकी मोबाईल नंबर टाका.'
-    if (!form.paymentDate) nextErrors.paymentDate = 'दिनांक आवश्यक आहे.'
-    if (!form.amount || Number(form.amount) <= 0) nextErrors.amount = 'योग्य रक्कम टाका.'
+    if (!form.receiptNumber.trim()) nextErrors.receiptNumber = t('errors.receiptNumber')
+    if (!form.name.trim()) nextErrors.name = t('errors.name')
+    if (!/^\d{10}$/.test(form.mobile)) nextErrors.mobile = t('errors.mobile')
+    if (!form.paymentDate) nextErrors.paymentDate = t('errors.date')
+    if (!form.amount || Number(form.amount) <= 0) nextErrors.amount = t('errors.amount')
     setErrors(nextErrors)
     return Object.keys(nextErrors).length === 0
   }
 
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginError('')
+    setIsLoggingIn(true)
+    try {
+      await loginOperator(loginId, loginPassword)
+      setLoginPassword('')
+    } catch (error) {
+      console.error(error)
+      setLoginError(
+        error instanceof Error && error.message === 'INVALID_OPERATOR'
+          ? t('errors.invalidLogin')
+          : firebaseErrorMessage(error, (key) => t(key)),
+      )
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      await logoutOperator()
+      setStatus('')
+      setHistoryError('')
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
   const downloadPdf = async () => {
+    if (!authUser) {
+      setStatus(t('status.session'))
+      return
+    }
     if (!validate() || !receiptRef.current) {
-      setStatus('कृपया आवश्यक माहिती पूर्ण करा.')
+      setStatus(t('status.required'))
       return
     }
 
     setIsDownloading(true)
-    setStatus('PDF तयार होत आहे…')
+    setStatus(t('status.reserving'))
 
     try {
+      const reserved = await reserveReceiptNumber(financialYear)
+      flushSync(() => {
+        setForm((current) => ({ ...current, receiptNumber: reserved.receiptNumber }))
+      })
+
+      setStatus(t('status.pdf'))
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
@@ -266,242 +480,298 @@ function App() {
         logging: false,
         imageTimeout: 20_000,
       })
-
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4',
         compress: true,
       })
-
       pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, 210, 297)
-      const safeNumber = form.receiptNumber.replace(/[^a-zA-Z0-9-]/g, '-')
+
+      setStatus(t('status.database'))
+      await saveReceipt({
+        receiptNumber: reserved.receiptNumber,
+        sequence: reserved.sequence,
+        financialYear,
+        name: form.name.trim(),
+        mobile: form.mobile,
+        paymentType: form.paymentType,
+        paymentDate: form.paymentDate,
+        amount: Number(form.amount),
+        amountInWords,
+        reference: form.reference.trim(),
+        createdBy: authUser.uid,
+        createdByName: 'Mangesh',
+      })
+
+      const safeNumber = reserved.receiptNumber.replace(/[^a-zA-Z0-9-]/g, '-')
       pdf.save(`receipt-${safeNumber}.pdf`)
-      setStatus('PDF यशस्वीरित्या डाउनलोड झाला.')
+      setReceiptSaved(true)
+      setStatus(t('status.receiptSaved', { number: reserved.receiptNumber }))
     } catch (error) {
       console.error(error)
-      setStatus('PDF तयार करता आला नाही. कृपया पुन्हा प्रयत्न करा.')
+      setStatus(firebaseErrorMessage(error, (key) => t(key)))
+      void refreshNextReceiptNumber()
     } finally {
       setIsDownloading(false)
     }
   }
 
   const resetForm = () => {
-    setForm({
-      receiptNumber: createReceiptNumber(),
+    setForm((current) => ({
+      receiptNumber: current.receiptNumber,
       name: '',
       mobile: '',
       paymentType: 'upi',
       paymentDate: todayForInput(),
       amount: '',
       reference: '',
-    })
+    }))
     setErrors({})
-    setStatus('नवीन पावती तयार आहे.')
+    setReceiptSaved(false)
+    setStatus(t('status.newReceipt'))
+    void refreshNextReceiptNumber()
+  }
+
+  const setExportYearAndRange = (year: string, receipts = allReceipts) => {
+    const available = receipts.filter((receipt) => receipt.financialYear === year).sort((a, b) => a.sequence - b.sequence)
+    setExportYear(year)
+    setFromSequence(available[0]?.sequence ?? 0)
+    setToSequence(available.at(-1)?.sequence ?? 0)
+    setExcelMessage('')
+  }
+
+  const openExcelExport = async () => {
+    setShowExcelExport(true)
+    setIsExcelLoading(true)
+    setExcelMessage('')
+    try {
+      const receipts = await getAllReceipts()
+      setAllReceipts(receipts)
+      const years = Array.from(new Set(receipts.map((receipt) => receipt.financialYear))).sort().reverse()
+      const defaultYear = years.includes(financialYear) ? financialYear : (years[0] ?? financialYear)
+      setExportYearAndRange(defaultYear, receipts)
+    } catch (error) {
+      console.error(error)
+      setExcelMessage(firebaseErrorMessage(error, (key) => t(key)))
+    } finally {
+      setIsExcelLoading(false)
+    }
+  }
+
+  const downloadExcel = async () => {
+    if (selectedExportReceipts.length === 0 || fromSequence > toSequence) {
+      setExcelMessage(t('export.invalidRange'))
+      return
+    }
+    setIsExcelDownloading(true)
+    setExcelMessage('')
+    try {
+      await downloadReceiptWorkbook(selectedExportReceipts, exportYear, language)
+      setExcelMessage(t('export.downloadSuccess'))
+    } catch (error) {
+      console.error(error)
+      setExcelMessage(t('errors.generic'))
+    } finally {
+      setIsExcelDownloading(false)
+    }
+  }
+
+  if (!authReady) {
+    return (
+      <div className="app-shell">
+        <AppHeader user={null} onLogout={() => undefined} />
+        <main className="auth-page"><div className="auth-loader" aria-label="Loading" /></main>
+      </div>
+    )
+  }
+
+  if (!authUser) {
+    return (
+      <div className="app-shell">
+        <AppHeader user={null} onLogout={() => undefined} />
+        <main className="auth-page">
+          <form className="login-card" onSubmit={handleLogin}>
+            <div className="login-icon" aria-hidden="true">ॐ</div>
+            <p className="login-kicker">{t('auth.secure')}</p>
+            <h2>{t('auth.title')}</h2>
+            <p className="login-copy">{t('auth.copy')}</p>
+            <label className="field">
+              <span>{t('auth.operatorId')} <small>Operator ID</small></span>
+              <input
+                value={loginId}
+                onChange={(event) => setLoginId(event.target.value)}
+                autoComplete="username"
+                autoFocus
+              />
+            </label>
+            <label className="field">
+              <span>{t('auth.password')} <small>Password</small></span>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            {loginError && <p className="login-error" role="alert">{loginError}</p>}
+            <button className="login-button" type="submit" disabled={isLoggingIn}>
+              {isLoggingIn ? t('auth.loggingIn') : t('auth.login')}
+            </button>
+            <p className="firebase-note"><i aria-hidden="true" /> {t('auth.firebase')}</p>
+          </form>
+        </main>
+      </div>
+    )
   }
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div className="brand-mark" aria-hidden="true">
-          ॐ
-        </div>
-        <div>
-          <p className="eyebrow">ॐ साईनाथ सेवा मंडळ, रजि.</p>
-          <h1>डिजिटल वर्गणी पावती</h1>
-          <p className="header-subtitle">माहिती भरा, पावती तपासा आणि PDF डाउनलोड करा.</p>
-        </div>
-      </header>
+      <AppHeader user={authUser} onLogout={() => void handleLogout()} />
 
       <main className="workspace">
-        <aside className="form-panel" aria-label="Receipt information form">
-          <div className="panel-heading">
-            <div>
-              <span className="step-badge">01</span>
-              <h2>पावतीची माहिती</h2>
+        <div className="left-column">
+          <aside className="form-panel" aria-label="Receipt information form">
+            <div className="panel-heading">
+              <div><span className="step-badge">{t('form.step')}</span><h2>{t('form.title')}</h2></div>
+              <button className="text-button" type="button" onClick={resetForm}>{t('form.newReceipt')}</button>
             </div>
-            <button className="text-button" type="button" onClick={resetForm}>
-              नवीन पावती
+
+            <div className="form-grid">
+              <label className="field field-wide receipt-number-field">
+                <span>{t('form.receiptNumber')} <small>{t('form.databaseSequence')}</small></span>
+                <div className="locked-input">
+                  <input value={isNumberLoading ? t('form.loadingNumber') : databaseReady ? form.receiptNumber : t('form.rulesRequired')} readOnly />
+                  <span title="Firebase database generated">DB</span>
+                </div>
+                {errors.receiptNumber && <em>{errors.receiptNumber}</em>}
+              </label>
+
+              <label className="field field-wide">
+                <span>{t('form.name')} <small>{t('form.fullName')}</small></span>
+                <input value={form.name} onChange={(event) => updateField('name', event.target.value)} placeholder={t('form.namePlaceholder')} aria-invalid={Boolean(errors.name)} />
+                {errors.name && <em>{errors.name}</em>}
+              </label>
+
+              <label className="field field-wide">
+                <span>{t('form.mobile')} <small>{t('form.mobileEnglish')}</small></span>
+                <input value={form.mobile} onChange={(event) => updateField('mobile', event.target.value.replace(/\D/g, '').slice(0, 10))} inputMode="numeric" placeholder={t('form.mobilePlaceholder')} aria-invalid={Boolean(errors.mobile)} />
+                {errors.mobile && <em>{errors.mobile}</em>}
+              </label>
+
+              <label className="field">
+                <span>{t('form.paymentType')} <small>{t('form.paymentTypeEnglish')}</small></span>
+                <select value={form.paymentType} onChange={(event) => updateField('paymentType', event.target.value as PaymentType)}>
+                  <option value="upi">{paymentLabels.upi}</option><option value="cash">{paymentLabels.cash}</option><option value="bank">{paymentLabels.bank}</option><option value="cheque">{paymentLabels.cheque}</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span>{t('form.paymentDate')} <small>{t('form.paymentDateEnglish')}</small></span>
+                <input type="date" value={form.paymentDate} onChange={(event) => updateField('paymentDate', event.target.value)} aria-invalid={Boolean(errors.paymentDate)} />
+                {errors.paymentDate && <em>{errors.paymentDate}</em>}
+              </label>
+
+              <label className="field field-wide">
+                <span>{t('form.amount')} <small>{t('form.amountEnglish')}</small></span>
+                <div className="amount-input"><b>₹</b><input type="number" min="1" step="1" value={form.amount} onChange={(event) => updateField('amount', event.target.value)} placeholder="1000" aria-invalid={Boolean(errors.amount)} /></div>
+                {errors.amount && <em>{errors.amount}</em>}
+              </label>
+
+              <label className="field field-wide">
+                <span>{t('form.reference')} <small>{t('form.referenceEnglish')}</small></span>
+                <input value={form.reference} onChange={(event) => updateField('reference', event.target.value)} placeholder={t('form.referencePlaceholder')} />
+              </label>
+            </div>
+
+            <div className="words-preview"><span>{t('form.amountWords')}</span><strong>{amountInWords}</strong></div>
+            <button className="download-button" type="button" onClick={downloadPdf} disabled={isDownloading || isNumberLoading || !databaseReady || receiptSaved}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></svg>
+              {isDownloading ? t('form.saving') : receiptSaved ? t('form.saved') : t('form.saveDownload')}
             </button>
-          </div>
+            <p className={`status-message ${receiptSaved ? 'status-success' : ''}`} role="status">{status}</p>
+          </aside>
 
-          <div className="form-grid">
-            <label className="field field-wide">
-              <span>पावती क्रमांक <small>Receipt number</small></span>
-              <input
-                value={form.receiptNumber}
-                onChange={(event) => updateField('receiptNumber', event.target.value)}
-                aria-invalid={Boolean(errors.receiptNumber)}
-              />
-              {errors.receiptNumber && <em>{errors.receiptNumber}</em>}
-            </label>
-
-            <label className="field field-wide">
-              <span>नाव <small>Full name</small></span>
-              <input
-                value={form.name}
-                onChange={(event) => updateField('name', event.target.value)}
-                placeholder="उदा. कुणाल जाधव"
-                aria-invalid={Boolean(errors.name)}
-              />
-              {errors.name && <em>{errors.name}</em>}
-            </label>
-
-            <label className="field field-wide">
-              <span>मोबाईल नं. <small>Mobile number</small></span>
-              <input
-                value={form.mobile}
-                onChange={(event) =>
-                  updateField('mobile', event.target.value.replace(/\D/g, '').slice(0, 10))
-                }
-                inputMode="numeric"
-                placeholder="10 अंकी नंबर"
-                aria-invalid={Boolean(errors.mobile)}
-              />
-              {errors.mobile && <em>{errors.mobile}</em>}
-            </label>
-
-            <label className="field">
-              <span>पेमेंट प्रकार <small>Payment type</small></span>
-              <select
-                value={form.paymentType}
-                onChange={(event) => updateField('paymentType', event.target.value)}
-              >
-                <option value="upi">UPI</option>
-                <option value="cash">Cash / रोख</option>
-                <option value="bank">Bank transfer</option>
-                <option value="cheque">Cheque / धनादेश</option>
-              </select>
-            </label>
-
-            <label className="field">
-              <span>पेमेंट दिनांक <small>Payment date</small></span>
-              <input
-                type="date"
-                value={form.paymentDate}
-                onChange={(event) => updateField('paymentDate', event.target.value)}
-                aria-invalid={Boolean(errors.paymentDate)}
-              />
-              {errors.paymentDate && <em>{errors.paymentDate}</em>}
-            </label>
-
-            <label className="field field-wide">
-              <span>एकूण रक्कम <small>Amount in rupees</small></span>
-              <div className="amount-input">
-                <b>₹</b>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.amount}
-                  onChange={(event) => updateField('amount', event.target.value)}
-                  placeholder="1000"
-                  aria-invalid={Boolean(errors.amount)}
-                />
+          <section className="history-panel" aria-label="Recent receipts">
+            <div className="history-heading">
+              <div><span className="step-badge">DB</span><h2>{t('history.title')}</h2></div>
+              <div className="history-actions"><span>{t('history.records', { count: recentReceipts.length })}</span><button type="button" onClick={() => void openExcelExport()}>{t('history.excel')}</button></div>
+            </div>
+            {historyError ? <p className="history-empty history-error">{historyError}</p> : recentReceipts.length === 0 ? (
+              <p className="history-empty">{t('history.empty')}</p>
+            ) : (
+              <div className="history-list">
+                {recentReceipts.map((receipt) => (
+                  <article className="history-item" key={receipt.id}>
+                    <div><strong>{receipt.name}</strong><span>{receipt.receiptNumber}</span></div>
+                    <div><strong>₹ {Number(receipt.amount).toLocaleString('en-IN')}</strong><span>{formatReceiptDate(receipt.paymentDate)}</span></div>
+                  </article>
+                ))}
               </div>
-              {errors.amount && <em>{errors.amount}</em>}
-            </label>
-
-            <label className="field field-wide">
-              <span>व्यवहार क्रमांक <small>Reference — optional</small></span>
-              <input
-                value={form.reference}
-                onChange={(event) => updateField('reference', event.target.value)}
-                placeholder="UPI / cheque / bank reference"
-              />
-            </label>
-          </div>
-
-          <div className="words-preview">
-            <span>अक्षरी रक्कम</span>
-            <strong>{amountInWords}</strong>
-          </div>
-
-          <button
-            className="download-button"
-            type="button"
-            onClick={downloadPdf}
-            disabled={isDownloading}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" />
-            </svg>
-            {isDownloading ? 'PDF तयार होत आहे…' : 'पावती PDF डाउनलोड करा'}
-          </button>
-          <p className="status-message" role="status">{status}</p>
-        </aside>
+            )}
+          </section>
+        </div>
 
         <section className="preview-panel" aria-label="Receipt preview">
           <div className="preview-heading">
-            <div>
-              <span className="step-badge">02</span>
-              <h2>पावती पूर्वदृश्य</h2>
-            </div>
+            <div><span className="step-badge">{t('preview.step')}</span><h2>{t('preview.title')}</h2></div>
             <span className="a4-badge">A4 • PDF</span>
           </div>
-
           <div className="receipt-frame">
             <article className="receipt-page" ref={receiptRef}>
-              <img
-                className="receipt-background"
-                src={receiptTemplate}
-                alt="Om Sainath Seva Mandal receipt template"
-              />
-
+              <img className="receipt-background" src={receiptTemplate} alt="Om Sainath Seva Mandal receipt template" />
               <div className="receipt-content">
                 <div className="receipt-title-row">
-                  <div className="receipt-meta">
-                    <span>पावती क्र.</span>
-                    <strong>{form.receiptNumber || '—'}</strong>
-                  </div>
-                  <h3>पावती</h3>
-                  <div className="receipt-meta receipt-meta-right">
-                    <span>दिनांक</span>
-                    <strong>{formatReceiptDate(form.paymentDate)}</strong>
-                  </div>
+                  <div className="receipt-meta"><span>{t('receipt.number')}</span><strong>{form.receiptNumber || '—'}</strong></div>
+                  <h3>{t('receipt.title')}</h3>
+                  <div className="receipt-meta receipt-meta-right"><span>{t('receipt.date')}</span><strong>{formatReceiptDate(form.paymentDate)}</strong></div>
                 </div>
-
                 <div className="receipt-table">
-                  <div className="receipt-row receipt-row-full">
-                    <span>नाव :</span>
-                    <strong>{form.name || '—'}</strong>
-                  </div>
-                  <div className="receipt-row receipt-row-full">
-                    <span>मोबाईल नं. :</span>
-                    <strong>{form.mobile || '—'}</strong>
+                  <div className="receipt-row receipt-row-full"><span>{t('receipt.name')}</span><strong>{form.name || '—'}</strong></div>
+                  <div className="receipt-row receipt-row-full"><span>{t('receipt.mobile')}</span><strong>{form.mobile || '—'}</strong></div>
+                  <div className="receipt-row receipt-row-split">
+                    <div><span>{t('receipt.paymentType')}</span><strong>{paymentLabels[form.paymentType]}</strong></div>
+                    <div className="receipt-amount"><span>{t('receipt.totalAmount')}</span><strong>{formatAmount(form.amount)}</strong></div>
                   </div>
                   <div className="receipt-row receipt-row-split">
-                    <div>
-                      <span>पेमेंट प्रकार :</span>
-                      <strong>{paymentLabels[form.paymentType]}</strong>
-                    </div>
-                    <div className="receipt-amount">
-                      <span>एकूण रक्कम</span>
-                      <strong>{formatAmount(form.amount)}</strong>
-                    </div>
+                    <div><span>{t('receipt.paymentDate')}</span><strong>{formatReceiptDate(form.paymentDate)}</strong></div>
+                    <div className="receipt-reference"><span>{t('receipt.reference')}</span><strong>{form.reference || '—'}</strong></div>
                   </div>
-                  <div className="receipt-row receipt-row-split">
-                    <div>
-                      <span>पेमेंट दिनांक :</span>
-                      <strong>{formatReceiptDate(form.paymentDate)}</strong>
-                    </div>
-                    <div className="receipt-reference">
-                      <span>व्यवहार क्र. :</span>
-                      <strong>{form.reference || '—'}</strong>
-                    </div>
-                  </div>
-                  <div className="receipt-row receipt-row-full receipt-words">
-                    <span>अक्षरी रक्कम :</span>
-                    <strong>{amountInWords}</strong>
-                  </div>
+                  <div className="receipt-row receipt-row-full receipt-words"><span>{t('receipt.amountWords')}</span><strong>{amountInWords}</strong></div>
                 </div>
-
-                <p className="computer-note">ही संगणकीकृत पावती आहे. स्वाक्षरीची आवश्यकता नाही.</p>
+                <p className="computer-note">{t('receipt.computerNote')}</p>
               </div>
             </article>
           </div>
         </section>
       </main>
+
+      {showExcelExport && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowExcelExport(false)}>
+          <section className="excel-modal" role="dialog" aria-modal="true" aria-labelledby="excel-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="excel-modal-heading">
+              <div className="excel-icon" aria-hidden="true">X</div>
+              <div><h2 id="excel-modal-title">{t('export.title')}</h2><p>{t('export.copy')}</p></div>
+              <button type="button" onClick={() => setShowExcelExport(false)} aria-label={t('export.cancel')}>×</button>
+            </div>
+            {isExcelLoading ? <div className="excel-loading"><div className="auth-loader" />{t('export.loading')}</div> : allReceipts.length === 0 ? (
+              <p className="history-empty">{t('export.noRecords')}</p>
+            ) : (
+              <>
+                <div className="excel-range-grid">
+                  <label className="field field-wide"><span>{t('export.financialYear')}</span><select value={exportYear} onChange={(event) => setExportYearAndRange(event.target.value)}>{exportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+                  <label className="field"><span>{t('export.from')}</span><select value={fromSequence} onChange={(event) => { setFromSequence(Number(event.target.value)); setExcelMessage('') }}>{exportYearReceipts.map((receipt) => <option key={receipt.id} value={receipt.sequence}>{receipt.receiptNumber} — {receipt.name}</option>)}</select></label>
+                  <label className="field"><span>{t('export.to')}</span><select value={toSequence} onChange={(event) => { setToSequence(Number(event.target.value)); setExcelMessage('') }}>{exportYearReceipts.map((receipt) => <option key={receipt.id} value={receipt.sequence}>{receipt.receiptNumber} — {receipt.name}</option>)}</select></label>
+                </div>
+                <div className="excel-summary"><span>{t('export.selected', { count: selectedExportReceipts.length })}</span><strong>{t('export.total', { amount: selectedExportTotal.toLocaleString('en-IN') })}</strong></div>
+                {excelMessage && <p className="excel-message" role="status">{excelMessage}</p>}
+                <div className="excel-modal-actions"><button type="button" className="secondary-button" onClick={() => setShowExcelExport(false)}>{t('export.cancel')}</button><button type="button" className="excel-download-button" onClick={() => void downloadExcel()} disabled={isExcelDownloading || selectedExportReceipts.length === 0}>{isExcelDownloading ? t('export.downloading') : t('export.download')}</button></div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   )
 }
