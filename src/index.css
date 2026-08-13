@@ -1,0 +1,587 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700;800&display=swap');
+
+:root {
+  font-family: 'DM Sans', 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  color: #2f211b;
+  background: #f6efe8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --maroon: #742c13;
+  --maroon-dark: #4a1b0c;
+  --orange: #ef7f1a;
+  --cream: #fffaf4;
+  --line: #e2d4c8;
+  --muted: #786b63;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(239, 127, 26, 0.09), transparent 32rem),
+    #f6efe8;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 22px clamp(20px, 4vw, 64px);
+  color: #fff;
+  background:
+    linear-gradient(100deg, rgba(73, 24, 8, 0.96), rgba(120, 43, 13, 0.94)),
+    #742c13;
+  border-bottom: 4px solid var(--orange);
+  box-shadow: 0 10px 30px rgba(74, 27, 12, 0.16);
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 222, 168, 0.48);
+  border-radius: 18px;
+  color: #ffd89d;
+  background: rgba(255, 255, 255, 0.08);
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.app-header h1,
+.app-header p {
+  margin: 0;
+}
+
+.app-header h1 {
+  margin-top: 2px;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: clamp(24px, 2.5vw, 36px);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.eyebrow {
+  color: #ffd9a4;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.header-subtitle {
+  margin-top: 5px !important;
+  color: rgba(255, 255, 255, 0.74);
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 14px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(340px, 430px) minmax(520px, 1fr);
+  align-items: start;
+  gap: 26px;
+  width: min(1540px, 100%);
+  margin: 0 auto;
+  padding: 28px clamp(18px, 3vw, 48px) 48px;
+}
+
+.form-panel,
+.preview-panel {
+  border: 1px solid rgba(116, 44, 19, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 252, 248, 0.96);
+  box-shadow: 0 18px 50px rgba(78, 45, 27, 0.08);
+}
+
+.form-panel {
+  position: sticky;
+  top: 20px;
+  padding: 24px;
+}
+
+.preview-panel {
+  padding: 24px;
+}
+
+.panel-heading,
+.preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.panel-heading > div,
+.preview-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-heading h2,
+.preview-heading h2 {
+  margin: 0;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.step-badge,
+.a4-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--maroon);
+  background: #f9e8d8;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.a4-badge {
+  color: #6f625b;
+  background: #f3ede7;
+}
+
+.text-button {
+  padding: 4px;
+  border: 0;
+  color: var(--maroon);
+  background: transparent;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.text-button:hover {
+  color: var(--orange);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.field > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: #3b2b24;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field small {
+  color: #96877e;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 13px;
+  border: 1px solid #d9ccc2;
+  border-radius: 11px;
+  outline: none;
+  color: #30231d;
+  background: #fff;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: #b95d25;
+  box-shadow: 0 0 0 3px rgba(185, 93, 37, 0.12);
+}
+
+.field input[aria-invalid='true'] {
+  border-color: #c74634;
+}
+
+.field em {
+  color: #b33327;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.amount-input {
+  position: relative;
+}
+
+.amount-input b {
+  position: absolute;
+  top: 50%;
+  left: 13px;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: var(--maroon);
+  font-size: 17px;
+}
+
+.amount-input input {
+  padding-left: 34px;
+}
+
+.words-preview {
+  margin-top: 18px;
+  padding: 13px 14px;
+  border: 1px dashed #d8b38f;
+  border-radius: 12px;
+  background: #fff8ee;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+}
+
+.words-preview span {
+  display: block;
+  margin-bottom: 3px;
+  color: #8b6b57;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.words-preview strong {
+  color: #472d20;
+  font-size: 13px;
+}
+
+.download-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 50px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: 13px;
+  color: #fff;
+  background: linear-gradient(135deg, #8f3d17, #621f0b);
+  box-shadow: 0 10px 22px rgba(98, 31, 11, 0.22);
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-weight: 800;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.download-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 13px 26px rgba(98, 31, 11, 0.28);
+}
+
+.download-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.download-button svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.status-message {
+  min-height: 18px;
+  margin: 8px 0 0;
+  color: #776860;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 11px;
+  text-align: center;
+}
+
+.receipt-frame {
+  display: flex;
+  justify-content: center;
+  padding: clamp(10px, 2.5vw, 28px);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(234, 222, 211, 0.84)),
+    #eee4db;
+  overflow: hidden;
+}
+
+.receipt-page {
+  position: relative;
+  width: min(100%, 790px);
+  aspect-ratio: 210 / 297;
+  overflow: hidden;
+  background: #fffdf7;
+  box-shadow: 0 18px 45px rgba(62, 34, 18, 0.22);
+  container-type: inline-size;
+}
+
+.receipt-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.receipt-content {
+  position: absolute;
+  top: 20.5%;
+  right: 5.2%;
+  left: 5.2%;
+  z-index: 1;
+  color: #1d1612;
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', sans-serif;
+  font-size: 2.05cqi;
+}
+
+.receipt-title-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: end;
+  gap: 2cqi;
+  margin-bottom: 1.5cqi;
+}
+
+.receipt-title-row h3 {
+  margin: 0;
+  color: #29170f;
+  font-size: 4.2cqi;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+}
+
+.receipt-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2cqi;
+}
+
+.receipt-meta-right {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.receipt-meta span {
+  color: #6f4a37;
+  font-size: 1.45cqi;
+  font-weight: 600;
+}
+
+.receipt-meta strong {
+  font-family: 'DM Sans', 'Noto Sans Devanagari', sans-serif;
+  font-size: 1.72cqi;
+  overflow-wrap: anywhere;
+}
+
+.receipt-table {
+  border: 0.16cqi solid rgba(53, 32, 22, 0.9);
+  background: rgba(255, 253, 248, 0.9);
+}
+
+.receipt-row {
+  min-height: 5.1cqi;
+  border-bottom: 0.13cqi solid rgba(53, 32, 22, 0.85);
+}
+
+.receipt-row:last-child {
+  border-bottom: 0;
+}
+
+.receipt-row-full {
+  display: flex;
+  align-items: center;
+  gap: 1.1cqi;
+  padding: 0.9cqi 1.3cqi;
+}
+
+.receipt-row-split {
+  display: grid;
+  grid-template-columns: 1.65fr 1fr;
+}
+
+.receipt-row-split > div {
+  display: flex;
+  align-items: center;
+  gap: 0.8cqi;
+  min-width: 0;
+  padding: 0.9cqi 1.3cqi;
+}
+
+.receipt-row-split > div + div {
+  border-left: 0.13cqi solid rgba(53, 32, 22, 0.85);
+}
+
+.receipt-row span {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.receipt-row strong {
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.receipt-amount {
+  justify-content: space-between;
+  font-weight: 800;
+}
+
+.receipt-amount strong {
+  font-family: 'DM Sans', 'Noto Sans Devanagari', sans-serif;
+  font-size: 2.3cqi;
+  font-weight: 800;
+}
+
+.receipt-reference strong {
+  font-family: 'DM Sans', 'Noto Sans Devanagari', sans-serif;
+}
+
+.receipt-words {
+  align-items: flex-start;
+  min-height: 6.4cqi;
+}
+
+.receipt-words strong {
+  line-height: 1.45;
+}
+
+.computer-note {
+  margin: 1.2cqi 0 0;
+  color: rgba(48, 28, 18, 0.82);
+  font-size: 1.35cqi;
+  font-weight: 600;
+  text-align: center;
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    width: min(860px, 100%);
+  }
+
+  .form-panel {
+    position: static;
+  }
+}
+
+@media (max-width: 600px) {
+  .app-header {
+    align-items: flex-start;
+    padding: 18px;
+  }
+
+  .brand-mark {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    font-size: 23px;
+  }
+
+  .header-subtitle {
+    display: none;
+  }
+
+  .workspace {
+    padding: 16px 12px 30px;
+  }
+
+  .form-panel,
+  .preview-panel {
+    padding: 18px 14px;
+    border-radius: 16px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field-wide {
+    grid-column: auto;
+  }
+
+  .preview-heading {
+    margin-bottom: 14px;
+  }
+
+  .receipt-frame {
+    padding: 6px;
+  }
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .app-header,
+  .form-panel,
+  .preview-heading {
+    display: none !important;
+  }
+
+  .workspace,
+  .preview-panel,
+  .receipt-frame {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .receipt-page {
+    width: 210mm;
+    height: 297mm;
+    max-width: none;
+    box-shadow: none;
+  }
+}
