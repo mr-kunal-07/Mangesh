@@ -9,6 +9,7 @@ import {
 import {
   get,
   limitToFirst,
+  onValue,
   orderByKey,
   push,
   query,
@@ -37,6 +38,10 @@ export type ReceiptRecord = {
   createdAt: number
   createdBy: string
   createdByName: string
+}
+
+export function observeDatabaseConnection(callback: (connected: boolean) => void) {
+  return onValue(ref(database, '.info/connected'), (snapshot) => callback(snapshot.val() === true))
 }
 
 export type NewReceiptRecord = Omit<ReceiptRecord, 'id' | 'createdAt'>

@@ -1,4 +1,3 @@
-import { getAnalytics, isSupported } from 'firebase/analytics'
 import { getApp, getApps, initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getDatabase } from 'firebase/database'
@@ -20,8 +19,7 @@ export const auth = getAuth(app)
 export const database = getDatabase(app)
 
 if (typeof window !== 'undefined') {
-  void isSupported().then((supported) => {
-    if (supported) getAnalytics(app)
-  })
+  void import('firebase/analytics').then(async ({ getAnalytics, isSupported }) => {
+    if (await isSupported()) getAnalytics(app)
+  }).catch(() => undefined)
 }
-

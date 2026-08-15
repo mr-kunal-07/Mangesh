@@ -4,8 +4,15 @@ import type { User } from 'firebase/auth'
 import { useTranslation } from 'react-i18next'
 import receiptTemplate from './assets/receipt-template.jpeg'
 import LanguageSwitcher from './LanguageSwitcher'
+import ThemeSwitcher from './ThemeSwitcher'
+import DatePicker from './DatePicker'
 import type { AppLanguage } from './i18n'
 import { downloadReceiptWorkbook } from './excelExport'
+import { DesktopSidebar, MobileBottomNavigation } from './Navigation'
+import { ROUTE_PATHS, type AppRoute } from './appRoutes'
+import { getAllExpenses, saveExpense, type ExpenseCategory, type ExpenseRecord } from './expenseService'
+import { getSavedTheme, resolveTheme, THEME_STORAGE_KEY, type ThemePreference } from './theme'
+import { getSavedPreferences, savePreferences, type AppPreferences } from './preferences'
 import {
   formatReceiptNumber,
   getAllReceipts,
@@ -15,6 +22,7 @@ import {
   loginOperator,
   logoutOperator,
   observeAuth,
+  observeDatabaseConnection,
   reserveReceiptNumber,
   saveReceipt,
   type PaymentType,
@@ -33,8 +41,42 @@ type ReceiptForm = {
 
 type FormErrors = Partial<Record<keyof ReceiptForm, string>>
 
+type ExpenseForm = {
+  expenseDate: string
+  category: ExpenseCategory
+  description: string
+  amount: string
+  paymentType: PaymentType
+  reference: string
+}
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
+}
+
 const EXPORT_RANGE_START = 0
 const EXPORT_RANGE_END = Number.MAX_SAFE_INTEGER
+
+function routeFromPath(pathname: string, fallback: AppRoute = 'dashboard'): AppRoute {
+  const match = (Object.entries(ROUTE_PATHS) as Array<[AppRoute, string]>).find(([, path]) => path === pathname)
+  return match?.[0] ?? fallback
+}
+
+function downloadTextFile(filename: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function csvCell(value: string | number) {
+  let safeValue = String(value ?? '')
+  if (/^[=+\-@]/.test(safeValue)) safeValue = `'${safeValue}`
+  return `"${safeValue.replace(/"/g, '""')}"`
+}
 
 const marathiNumbers = [
   'शून्य',
@@ -319,6 +361,56 @@ const ReceiptDocument = forwardRef<HTMLElement, ReceiptDocumentProps>(function R
   )
 })
 
+type ExpenseVoucherDocumentProps = {
+  voucherNumber: string
+  description: string
+  categoryLabel: string
+  paymentTypeLabel: string
+  expenseDate: string
+  amount: string | number
+  reference: string
+  amountInWords: string
+}
+
+const ExpenseVoucherDocument = forwardRef<HTMLElement, ExpenseVoucherDocumentProps>(function ExpenseVoucherDocument({
+  voucherNumber,
+  description,
+  categoryLabel,
+  paymentTypeLabel,
+  expenseDate,
+  amount,
+  reference,
+  amountInWords,
+}, ref) {
+  const { t } = useTranslation()
+  return (
+    <article className="receipt-page" ref={ref}>
+      <img className="receipt-background" src={receiptTemplate} alt="Om Sainath Seva Mandal expense voucher template" />
+      <div className="receipt-content">
+        <div className="receipt-title-row">
+          <div className="receipt-meta"><span>{t('expense.voucherNumber')}</span><strong>{voucherNumber}</strong></div>
+          <h3>{t('expense.voucherTitle')}</h3>
+          <div className="receipt-meta receipt-meta-right"><span>{t('receipt.date')}</span><strong>{formatReceiptDate(expenseDate)}</strong></div>
+        </div>
+        <div className="receipt-table">
+          <div className="receipt-row receipt-row-full"><span>{t('expense.description')}:</span><strong>{description || '—'}</strong></div>
+          <div className="receipt-row receipt-row-full"><span>{t('expense.category')}:</span><strong>{categoryLabel}</strong></div>
+          <div className="receipt-row receipt-row-split">
+            <div><span>{t('expense.paymentType')}:</span><strong>{paymentTypeLabel}</strong></div>
+            <div className="receipt-amount"><span>{t('expense.amount')}:</span><strong>{formatAmount(String(amount))}</strong></div>
+          </div>
+          <div className="receipt-row receipt-row-split">
+            <div><span>{t('expense.date')}:</span><strong>{formatReceiptDate(expenseDate)}</strong></div>
+            <div className="receipt-reference"><span>{t('expense.reference')}:</span><strong>{reference || '—'}</strong></div>
+          </div>
+          <div className="receipt-row receipt-row-full receipt-words"><span>{t('form.amountWords')}:</span><strong>{amountInWords}</strong></div>
+        </div>
+        <p className="computer-note">{t('receipt.computerNote')}</p>
+      </div>
+    </article>
+  )
+})
+
 async function createReceiptPdf(element: HTMLElement) {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import('html2canvas'),
@@ -354,10 +446,13 @@ function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void
   return (
     <header className="app-header">
       <div className="header-brand">
-        <div className="brand-mark" aria-hidden="true">ॐ</div>
+        <div className="brand-mark" aria-hidden="true"><img src="/pwa-icon-192.png" alt="" /></div>
         <div>
           <p className="eyebrow">{t('header.organization')}</p>
-          <h1>{t('header.title')}</h1>
+          <h1>
+            <span className="header-desktop-title">{t('header.title')}</span>
+            <span className="header-mobile-title">{t('header.organization')}</span>
+          </h1>
           <p className="header-subtitle">{t('header.subtitle')}</p>
         </div>
       </div>
@@ -365,8 +460,9 @@ function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void
         <LanguageSwitcher />
         {user && (
           <div className="operator-actions">
-            <span><i aria-hidden="true" /> Mangesh</span>
-            <button type="button" onClick={onLogout}>{t('header.logout')}</button>
+            <button className="logout-icon-button" type="button" onClick={onLogout} aria-label={t('header.logout')} title={t('header.logout')}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M14 8l4 4-4 4m4-4H9" /></svg>
+            </button>
           </div>
         )}
       </div>
@@ -377,14 +473,21 @@ function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void
 function App() {
   const { t, i18n } = useTranslation()
   const receiptRef = useRef<HTMLElement>(null)
+  const expenseVoucherRef = useRef<HTMLElement>(null)
   const savedReceiptRef = useRef<HTMLElement>(null)
   const financialYear = useMemo(() => getFinancialYear(), [])
   const language = ((i18n.resolvedLanguage ?? i18n.language).split('-')[0] === 'en' ? 'en' : 'mr') as AppLanguage
+  const [preferences, setPreferences] = useState<AppPreferences>(getSavedPreferences)
+  const [activeRoute, setActiveRoute] = useState<AppRoute>(() => routeFromPath(window.location.pathname, preferences.defaultRoute))
+  const [themePreference, setThemePreference] = useState<ThemePreference>(getSavedTheme)
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [isStandalone, setIsStandalone] = useState(() => window.matchMedia('(display-mode: standalone)').matches)
   const [form, setForm] = useState<ReceiptForm>(() => ({
     receiptNumber: formatReceiptNumber(getFinancialYear(), 1),
     name: '',
     mobile: '',
-    paymentType: 'upi',
+    paymentType: preferences.receiptPaymentType,
     paymentDate: todayForInput(),
     amount: '',
     reference: '',
@@ -420,12 +523,31 @@ function App() {
   const [isExcelLoading, setIsExcelLoading] = useState(false)
   const [isExcelDownloading, setIsExcelDownloading] = useState(false)
   const [excelMessage, setExcelMessage] = useState('')
+  const [managementReceipts, setManagementReceipts] = useState<ReceiptRecord[]>([])
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([])
+  const [isManagementLoading, setIsManagementLoading] = useState(false)
+  const [managementError, setManagementError] = useState('')
+  const [isDatabaseConnected, setIsDatabaseConnected] = useState<boolean | null>(null)
+  const [reportYear, setReportYear] = useState(financialYear)
+  const [expenseForm, setExpenseForm] = useState<ExpenseForm>({
+    expenseDate: todayForInput(), category: 'festival', description: '', amount: '', paymentType: preferences.expensePaymentType, reference: '',
+  })
+  const [expenseMessage, setExpenseMessage] = useState('')
+  const [expenseError, setExpenseError] = useState('')
+  const [isExpenseSaving, setIsExpenseSaving] = useState(false)
+  const [isExpensePdfDownloading, setIsExpensePdfDownloading] = useState(false)
 
   const amountInWords = useMemo(
     () => language === 'en'
       ? numberToEnglishWords(Number(form.amount || 0))
       : numberToMarathiWords(Number(form.amount || 0)),
     [form.amount, language],
+  )
+  const expenseAmountInWords = useMemo(
+    () => language === 'en'
+      ? numberToEnglishWords(Number(expenseForm.amount || 0))
+      : numberToMarathiWords(Number(expenseForm.amount || 0)),
+    [expenseForm.amount, language],
   )
   const paymentLabels = useMemo<Record<PaymentType, string>>(() => ({
     cash: t('payment.cash'), upi: t('payment.upi'), bank: t('payment.bank'), cheque: t('payment.cheque'),
@@ -446,10 +568,182 @@ function App() {
     () => selectedExportReceipts.reduce((sum, receipt) => sum + Number(receipt.amount), 0),
     [selectedExportReceipts],
   )
+  const resolvedTheme = useMemo(() => resolveTheme(themePreference, systemPrefersDark), [systemPrefersDark, themePreference])
+  const currentYearReceipts = useMemo(
+    () => managementReceipts.filter((receipt) => receipt.financialYear === financialYear),
+    [financialYear, managementReceipts],
+  )
+  const currentYearExpenses = useMemo(
+    () => expenses.filter((expense) => expense.financialYear === financialYear),
+    [expenses, financialYear],
+  )
+  const totalCollections = useMemo(
+    () => currentYearReceipts.reduce((sum, receipt) => sum + Number(receipt.amount), 0),
+    [currentYearReceipts],
+  )
+  const totalExpenses = useMemo(
+    () => currentYearExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0),
+    [currentYearExpenses],
+  )
+  const recentDashboardReceipts = useMemo(
+    () => [...currentYearReceipts].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0)).slice(0, 5),
+    [currentYearReceipts],
+  )
+  const categoryLabels = useMemo<Record<ExpenseCategory, string>>(() => ({
+    festival: t('expense.categories.festival'), decoration: t('expense.categories.decoration'),
+    utilities: t('expense.categories.utilities'), food: t('expense.categories.food'),
+    transport: t('expense.categories.transport'), other: t('expense.categories.other'),
+  }), [t])
+  const reportYears = useMemo(
+    () => Array.from(new Set([financialYear, ...managementReceipts.map((receipt) => receipt.financialYear), ...expenses.map((expense) => expense.financialYear)])).sort().reverse(),
+    [expenses, financialYear, managementReceipts],
+  )
+  const reportReceipts = useMemo(
+    () => managementReceipts.filter((receipt) => receipt.financialYear === reportYear),
+    [managementReceipts, reportYear],
+  )
+  const reportExpenses = useMemo(
+    () => expenses.filter((expense) => expense.financialYear === reportYear),
+    [expenses, reportYear],
+  )
+  const reportCollectionsTotal = useMemo(
+    () => reportReceipts.reduce((sum, receipt) => sum + Number(receipt.amount), 0),
+    [reportReceipts],
+  )
+  const reportExpensesTotal = useMemo(
+    () => reportExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0),
+    [reportExpenses],
+  )
+  const paymentBreakdown = useMemo(
+    () => (Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => {
+      const records = reportReceipts.filter((receipt) => receipt.paymentType === paymentType)
+      return { key: paymentType, label: paymentLabels[paymentType], count: records.length, amount: records.reduce((sum, receipt) => sum + Number(receipt.amount), 0) }
+    }).filter((item) => item.count > 0),
+    [paymentLabels, reportReceipts],
+  )
+  const expenseBreakdown = useMemo(
+    () => (Object.keys(categoryLabels) as ExpenseCategory[]).map((category) => {
+      const records = reportExpenses.filter((expense) => expense.category === category)
+      return { key: category, label: categoryLabels[category], count: records.length, amount: records.reduce((sum, expense) => sum + Number(expense.amount), 0) }
+    }).filter((item) => item.count > 0).sort((a, b) => b.amount - a.amount),
+    [categoryLabels, reportExpenses],
+  )
+  const monthlyBreakdown = useMemo(() => {
+    const monthly = new Map<string, { collections: number; expenses: number }>()
+    reportReceipts.forEach((receipt) => {
+      const key = receipt.paymentDate.slice(0, 7)
+      const item = monthly.get(key) ?? { collections: 0, expenses: 0 }
+      item.collections += Number(receipt.amount)
+      monthly.set(key, item)
+    })
+    reportExpenses.forEach((expense) => {
+      const key = expense.expenseDate.slice(0, 7)
+      const item = monthly.get(key) ?? { collections: 0, expenses: 0 }
+      item.expenses += Number(expense.amount)
+      monthly.set(key, item)
+    })
+    return Array.from(monthly, ([month, values]) => ({ month, ...values })).sort((a, b) => a.month.localeCompare(b.month))
+  }, [reportExpenses, reportReceipts])
 
   useEffect(() => {
-    document.title = `${t('header.title')} | ${t('header.organization')}`
-  }, [language, t])
+    document.title = `${t(`nav.${activeRoute}`)} | ${t('header.organization')}`
+  }, [activeRoute, language, t])
+
+  const navigateTo = useCallback((route: AppRoute) => {
+    window.history.pushState({}, '', ROUTE_PATHS[route])
+    setActiveRoute(route)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
+  const changeTheme = useCallback((theme: ThemePreference) => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+    setThemePreference(theme)
+  }, [])
+
+  const installApplication = useCallback(async () => {
+    if (!installPrompt) return
+    await installPrompt.prompt()
+    const choice = await installPrompt.userChoice
+    if (choice.outcome === 'accepted') setInstallPrompt(null)
+  }, [installPrompt])
+
+  const updatePreference = <K extends keyof AppPreferences,>(key: K, value: AppPreferences[K]) => {
+    const next = { ...preferences, [key]: value }
+    savePreferences(next)
+    setPreferences(next)
+  }
+
+  const downloadBackup = () => {
+    const backup = {
+      application: 'Om Sainath Seva Mandal Management',
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      receipts: managementReceipts,
+      expenses,
+    }
+    downloadTextFile(`sainath-backup-${todayForInput()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8')
+  }
+
+  const downloadTransactionsCsv = () => {
+    const rows: Array<Array<string | number>> = [
+      ['Type', 'Date', 'Number / Reference', 'Name / Description', 'Payment / Category', 'Amount'],
+      ...reportReceipts.map((receipt) => ['Receipt', receipt.paymentDate, receipt.receiptNumber, receipt.name, paymentLabels[receipt.paymentType], Number(receipt.amount)]),
+      ...reportExpenses.map((expense) => ['Expense', expense.expenseDate, expense.reference, expense.description, categoryLabels[expense.category], -Number(expense.amount)]),
+    ]
+    const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`
+    downloadTextFile(`sainath-transactions-${reportYear}.csv`, csv, 'text/csv;charset=utf-8')
+  }
+
+  useEffect(() => {
+    const onPopState = () => setActiveRoute(routeFromPath(window.location.pathname, preferences.defaultRoute))
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [preferences.defaultRoute])
+
+  useEffect(() => {
+    const themeQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleSystemThemeChange = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches)
+    themeQuery.addEventListener('change', handleSystemThemeChange)
+    return () => themeQuery.removeEventListener('change', handleSystemThemeChange)
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme
+    document.documentElement.style.colorScheme = resolvedTheme
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', resolvedTheme === 'dark' ? '#170e0a' : '#742c13')
+  }, [resolvedTheme])
+
+  useEffect(() => {
+    const handleBeforeInstall = (event: Event) => {
+      event.preventDefault()
+      setInstallPrompt(event as BeforeInstallPromptEvent)
+    }
+    const handleInstalled = () => {
+      setInstallPrompt(null)
+      setIsStandalone(true)
+    }
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall)
+    window.addEventListener('appinstalled', handleInstalled)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall)
+      window.removeEventListener('appinstalled', handleInstalled)
+    }
+  }, [])
+
+  const loadManagementData = useCallback(async () => {
+    setIsManagementLoading(true)
+    setManagementError('')
+    try {
+      const [receiptRecords, expenseRecords] = await Promise.all([getAllReceipts(), getAllExpenses()])
+      setManagementReceipts(receiptRecords)
+      setExpenses(expenseRecords)
+    } catch (error) {
+      console.error(error)
+      setManagementError(firebaseErrorMessage(error, (key) => t(key)))
+    } finally {
+      setIsManagementLoading(false)
+    }
+  }, [t])
 
   const refreshNextReceiptNumber = useCallback(async () => {
     setIsNumberLoading(true)
@@ -478,6 +772,14 @@ function App() {
     }
     setAuthReady(true)
   }), [])
+
+  useEffect(() => observeDatabaseConnection(setIsDatabaseConnected), [])
+
+  useEffect(() => {
+    if (!authUser) return
+    const managementTimer = window.setTimeout(() => void loadManagementData(), 0)
+    return () => window.clearTimeout(managementTimer)
+  }, [authUser, loadManagementData])
 
   const loadHistoryPage = useCallback(async (page: number, cursor?: string) => {
     setIsHistoryLoading(true)
@@ -630,6 +932,7 @@ function App() {
 
       setHistoryCursors([undefined])
       void loadHistoryPage(1)
+      void loadManagementData()
 
       const safeNumber = reserved.receiptNumber.replace(/[^a-zA-Z0-9-]/g, '-')
       pdf.save(`receipt-${safeNumber}.pdf`)
@@ -649,7 +952,7 @@ function App() {
       receiptNumber: current.receiptNumber,
       name: '',
       mobile: '',
-      paymentType: 'upi',
+      paymentType: preferences.receiptPaymentType,
       paymentDate: todayForInput(),
       amount: '',
       reference: '',
@@ -658,6 +961,67 @@ function App() {
     setReceiptSaved(false)
     setStatus(t('status.newReceipt'))
     void refreshNextReceiptNumber()
+  }
+
+  const updateExpenseField = <K extends keyof ExpenseForm>(field: K, value: ExpenseForm[K]) => {
+    setExpenseForm((current) => ({ ...current, [field]: value }))
+    setExpenseError('')
+    setExpenseMessage('')
+  }
+
+  const submitExpense = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!authUser) return
+    if (!expenseForm.expenseDate || !expenseForm.description.trim() || Number(expenseForm.amount) <= 0) {
+      setExpenseError(t('expense.validation'))
+      return
+    }
+
+    setIsExpenseSaving(true)
+    setExpenseError('')
+    setExpenseMessage('')
+    try {
+      await saveExpense({
+        financialYear,
+        expenseDate: expenseForm.expenseDate,
+        category: expenseForm.category,
+        description: expenseForm.description.trim(),
+        amount: Number(expenseForm.amount),
+        paymentType: expenseForm.paymentType,
+        reference: expenseForm.reference.trim(),
+        createdBy: authUser.uid,
+        createdByName: 'Mangesh',
+      })
+      setExpenseForm({ expenseDate: todayForInput(), category: 'festival', description: '', amount: '', paymentType: preferences.expensePaymentType, reference: '' })
+      setExpenseMessage(t('expense.saved'))
+      await loadManagementData()
+    } catch (error) {
+      console.error(error)
+      setExpenseError(firebaseErrorMessage(error, (key) => t(key)))
+    } finally {
+      setIsExpenseSaving(false)
+    }
+  }
+
+  const downloadExpensePdf = async () => {
+    if (!expenseForm.expenseDate || !expenseForm.description.trim() || Number(expenseForm.amount) <= 0) {
+      setExpenseError(t('expense.validation'))
+      return
+    }
+    if (!expenseVoucherRef.current) return
+
+    setIsExpensePdfDownloading(true)
+    setExpenseError('')
+    try {
+      const pdf = await createReceiptPdf(expenseVoucherRef.current)
+      const safeDate = expenseForm.expenseDate.replace(/[^0-9-]/g, '')
+      pdf.save(`expense-voucher-${safeDate}.pdf`)
+    } catch (error) {
+      console.error(error)
+      setExpenseError(t('errors.generic'))
+    } finally {
+      setIsExpensePdfDownloading(false)
+    }
   }
 
   const setExportYearAndRange = (year: string) => {
@@ -753,10 +1117,31 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell management-shell">
       <AppHeader user={authUser} onLogout={() => void handleLogout()} />
+      <div className="management-body">
+        <DesktopSidebar activeRoute={activeRoute} onNavigate={navigateTo} />
+        <div className="management-main">
+        <div className="management-content">
+          {isDatabaseConnected === false && <div className="offline-banner" role="status"><span>!</span><div><strong>{t('connection.offline')}</strong><p>{t('connection.offlineCopy')}</p></div></div>}
+          {activeRoute === 'dashboard' && (
+            <main className="route-page dashboard-page">
+              <div className="route-heading"><div><p>{t('dashboard.kicker')}</p><h2>{t('dashboard.title')}</h2><span>{t('dashboard.subtitle', { year: financialYear })}</span></div><button type="button" onClick={() => navigateTo('receipts')}>{t('dashboard.newReceipt')}</button></div>
+              {managementError && <p className="route-error">{managementError}</p>}
+              <section className="stat-grid" aria-label={t('dashboard.summary')}>
+                <article><span>{t('dashboard.collections')}</span><strong>₹ {totalCollections.toLocaleString('en-IN')}</strong><small>{currentYearReceipts.length} {t('dashboard.receiptsCount')}</small></article>
+                <article><span>{t('dashboard.expenses')}</span><strong>₹ {totalExpenses.toLocaleString('en-IN')}</strong><small>{currentYearExpenses.length} {t('dashboard.entries')}</small></article>
+                <article className="stat-balance"><span>{t('dashboard.balance')}</span><strong>₹ {(totalCollections - totalExpenses).toLocaleString('en-IN')}</strong><small>{t('dashboard.available')}</small></article>
+                <article><span>{t('dashboard.latestReceipt')}</span><strong>{currentYearReceipts.at(-1)?.receiptNumber.split('/').at(-1) ?? '—'}</strong><small>{currentYearReceipts.at(-1)?.name ?? t('dashboard.noData')}</small></article>
+              </section>
+              <div className="dashboard-grid">
+                <section className="dashboard-card"><div className="dashboard-card-heading"><div><h3>{t('dashboard.recentReceipts')}</h3><p>{t('dashboard.recentReceiptsCopy')}</p></div><button type="button" onClick={() => navigateTo('receipts')}>{t('dashboard.viewAll')}</button></div>{isManagementLoading ? <div className="route-loader"><div className="auth-loader" /></div> : recentDashboardReceipts.length === 0 ? <p className="dashboard-empty">{t('dashboard.noReceipts')}</p> : <div className="activity-list">{recentDashboardReceipts.map((receipt) => <article key={receipt.id}><span className="activity-icon income">₹</span><div><strong>{receipt.name}</strong><small>{receipt.receiptNumber} · {formatReceiptDate(receipt.paymentDate)}</small></div><b>+₹ {Number(receipt.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
+                <section className="dashboard-card"><div className="dashboard-card-heading"><div><h3>{t('dashboard.recentExpenses')}</h3><p>{t('dashboard.recentExpensesCopy')}</p></div><button type="button" onClick={() => navigateTo('expenses')}>{t('dashboard.manage')}</button></div>{isManagementLoading ? <div className="route-loader"><div className="auth-loader" /></div> : currentYearExpenses.length === 0 ? <p className="dashboard-empty">{t('dashboard.noExpenses')}</p> : <div className="activity-list">{currentYearExpenses.slice(0, 5).map((expense) => <article key={expense.id}><span className="activity-icon expense">₹</span><div><strong>{expense.description}</strong><small>{categoryLabels[expense.category]} · {formatReceiptDate(expense.expenseDate)}</small></div><b className="expense-value">−₹ {Number(expense.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
+              </div>
+            </main>
+          )}
 
-      <main className="workspace">
+          {activeRoute === 'receipts' && <main className="workspace">
         <div className="left-column">
           <aside className="form-panel" aria-label="Receipt information form">
             <div className="panel-heading">
@@ -793,11 +1178,11 @@ function App() {
                 </select>
               </label>
 
-              <label className="field">
+              <div className="field">
                 <span>{t('form.paymentDate')} <small>{t('form.paymentDateEnglish')}</small></span>
-                <input type="date" value={form.paymentDate} onChange={(event) => updateField('paymentDate', event.target.value)} aria-invalid={Boolean(errors.paymentDate)} />
+                <DatePicker value={form.paymentDate} onChange={(value) => updateField('paymentDate', value)} label={t('form.paymentDate')} invalid={Boolean(errors.paymentDate)} />
                 {errors.paymentDate && <em>{errors.paymentDate}</em>}
-              </label>
+              </div>
 
               <label className="field field-wide">
                 <span>{t('form.amount')} <small>{t('form.amountEnglish')}</small></span>
@@ -874,7 +1259,122 @@ function App() {
             />
           </div>
         </section>
-      </main>
+          </main>}
+
+          {activeRoute === 'expenses' && (
+            <main className="route-page expense-page">
+              <div className="route-heading"><div><p>{t('expense.kicker')}</p><h2>{t('expense.title')}</h2><span>{t('expense.subtitle')}</span></div></div>
+              <div className="expense-layout">
+                <form className="route-card expense-form-card" onSubmit={submitExpense}>
+                  <div className="route-card-heading"><div><h3>{t('expense.add')}</h3><p>{t('expense.addCopy')}</p></div><span>₹</span></div>
+                  <div className="form-grid">
+                    <div className="field"><span>{t('expense.date')}</span><DatePicker value={expenseForm.expenseDate} onChange={(value) => updateExpenseField('expenseDate', value)} label={t('expense.date')} /></div>
+                    <label className="field"><span>{t('expense.category')}</span><select value={expenseForm.category} onChange={(event) => updateExpenseField('category', event.target.value as ExpenseCategory)}>{(Object.keys(categoryLabels) as ExpenseCategory[]).map((category) => <option key={category} value={category}>{categoryLabels[category]}</option>)}</select></label>
+                    <label className="field field-wide"><span>{t('expense.description')}</span><input value={expenseForm.description} onChange={(event) => updateExpenseField('description', event.target.value)} placeholder={t('expense.descriptionPlaceholder')} /></label>
+                    <label className="field"><span>{t('expense.amount')}</span><div className="amount-input"><b>₹</b><input type="number" min="1" step="1" value={expenseForm.amount} onChange={(event) => updateExpenseField('amount', event.target.value)} placeholder="1000" /></div></label>
+                    <label className="field"><span>{t('expense.paymentType')}</span><select value={expenseForm.paymentType} onChange={(event) => updateExpenseField('paymentType', event.target.value as PaymentType)}><option value="cash">{paymentLabels.cash}</option><option value="upi">{paymentLabels.upi}</option><option value="bank">{paymentLabels.bank}</option><option value="cheque">{paymentLabels.cheque}</option></select></label>
+                    <label className="field field-wide"><span>{t('expense.reference')}</span><input value={expenseForm.reference} onChange={(event) => updateExpenseField('reference', event.target.value)} placeholder={t('expense.referencePlaceholder')} /></label>
+                  </div>
+                  {expenseError && <p className="expense-message error" role="alert">{expenseError}</p>}
+                  {expenseMessage && <p className="expense-message success" role="status">{expenseMessage}</p>}
+                  <button className="expense-save-button" type="submit" disabled={isExpenseSaving}>{isExpenseSaving ? t('expense.saving') : t('expense.save')}</button>
+                </form>
+                <section className="preview-panel expense-preview-card" aria-label={t('expense.previewTitle')}>
+                  <div className="preview-heading">
+                    <div><span className="step-badge">02</span><h2>{t('expense.previewTitle')}</h2></div>
+                    <span className="a4-badge">A4 • PDF</span>
+                  </div>
+                  <div className="receipt-frame">
+                    <ExpenseVoucherDocument
+                      ref={expenseVoucherRef}
+                      voucherNumber={`EXP/${financialYear}/${t('expense.previewDraft')}`}
+                      description={expenseForm.description}
+                      categoryLabel={categoryLabels[expenseForm.category]}
+                      paymentTypeLabel={paymentLabels[expenseForm.paymentType]}
+                      expenseDate={expenseForm.expenseDate}
+                      amount={expenseForm.amount}
+                      reference={expenseForm.reference}
+                      amountInWords={expenseAmountInWords}
+                    />
+                  </div>
+                  <button className="expense-pdf-button" type="button" onClick={() => void downloadExpensePdf()} disabled={isExpensePdfDownloading}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" /></svg>
+                    {isExpensePdfDownloading ? t('expense.downloadingPdf') : t('expense.downloadPdf')}
+                  </button>
+                </section>
+                <section className="route-card expense-list-card"><div className="route-card-heading"><div><h3>{t('expense.history')}</h3><p>{t('expense.historyCopy', { year: financialYear })}</p></div><strong>₹ {totalExpenses.toLocaleString('en-IN')}</strong></div>{isManagementLoading ? <div className="route-loader"><div className="auth-loader" /></div> : currentYearExpenses.length === 0 ? <p className="dashboard-empty">{t('expense.empty')}</p> : <div className="expense-list">{currentYearExpenses.map((expense) => <article key={expense.id}><span>{categoryLabels[expense.category]}</span><div><strong>{expense.description}</strong><small>{formatReceiptDate(expense.expenseDate)} · {paymentLabels[expense.paymentType]}{expense.reference ? ` · ${expense.reference}` : ''}</small></div><b>₹ {Number(expense.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
+              </div>
+            </main>
+          )}
+
+          {activeRoute === 'reports' && (
+            <main className="route-page reports-page">
+              <div className="route-heading"><div><p>{t('reports.kicker')}</p><h2>{t('reports.title')}</h2><span>{t('reports.subtitle')}</span></div><div className="route-heading-actions"><button type="button" onClick={downloadTransactionsCsv}>{t('reports.downloadCsv')}</button><button type="button" onClick={() => void openExcelExport()}>{t('reports.download')}</button></div></div>
+              <section className="report-toolbar route-card"><label><span>{t('reports.year')}</span><select value={reportYear} onChange={(event) => setReportYear(event.target.value)}>{reportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label><div><strong>{reportReceipts.length + reportExpenses.length}</strong><span>{t('reports.transactions')}</span></div></section>
+              <section className="report-summary route-card"><div><span>{t('dashboard.collections')}</span><strong>₹ {reportCollectionsTotal.toLocaleString('en-IN')}</strong></div><div><span>{t('dashboard.expenses')}</span><strong>₹ {reportExpensesTotal.toLocaleString('en-IN')}</strong></div><div><span>{t('dashboard.balance')}</span><strong>₹ {(reportCollectionsTotal - reportExpensesTotal).toLocaleString('en-IN')}</strong></div><div><span>{t('reports.averageReceipt')}</span><strong>₹ {Math.round(reportReceipts.length ? reportCollectionsTotal / reportReceipts.length : 0).toLocaleString('en-IN')}</strong></div></section>
+              <div className="report-analysis-grid">
+                <section className="route-card analysis-card"><div className="analysis-heading"><h3>{t('reports.paymentBreakdown')}</h3><p>{t('reports.paymentCopy')}</p></div>{paymentBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noActivity')}</p> : <div className="breakdown-list">{paymentBreakdown.map((item) => <div className="breakdown-row" key={item.key}><div><span>{item.label}</span><small>{t('reports.records', { count: item.count })}</small></div><strong>₹ {item.amount.toLocaleString('en-IN')}</strong><i><b style={{ width: `${reportCollectionsTotal ? (item.amount / reportCollectionsTotal) * 100 : 0}%` }} /></i></div>)}</div>}</section>
+                <section className="route-card analysis-card"><div className="analysis-heading"><h3>{t('reports.expenseBreakdown')}</h3><p>{t('reports.expenseCopy')}</p></div>{expenseBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noExpenses')}</p> : <div className="breakdown-list expense-breakdown">{expenseBreakdown.map((item) => <div className="breakdown-row" key={item.key}><div><span>{item.label}</span><small>{t('reports.records', { count: item.count })}</small></div><strong>₹ {item.amount.toLocaleString('en-IN')}</strong><i><b style={{ width: `${reportExpensesTotal ? (item.amount / reportExpensesTotal) * 100 : 0}%` }} /></i></div>)}</div>}</section>
+                <section className="route-card analysis-card monthly-analysis"><div className="analysis-heading"><h3>{t('reports.monthly')}</h3><p>{t('reports.monthlyCopy')}</p></div>{monthlyBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noActivity')}</p> : <div className="monthly-list"><div className="monthly-header"><span>{t('reports.year')}</span><span>{t('reports.collectionsShort')}</span><span>{t('reports.expensesShort')}</span><span>{t('reports.net')}</span></div>{monthlyBreakdown.map((item) => <div className="monthly-row" key={item.month}><strong>{new Intl.DateTimeFormat(language === 'en' ? 'en-IN' : 'mr-IN', { month: 'short', year: 'numeric' }).format(new Date(`${item.month}-01T00:00:00`))}</strong><span className="income-value"><small>{t('reports.collectionsShort')}</small>₹ {item.collections.toLocaleString('en-IN')}</span><span className="expense-value"><small>{t('reports.expensesShort')}</small>₹ {item.expenses.toLocaleString('en-IN')}</span><b><small>{t('reports.net')}</small>₹ {(item.collections - item.expenses).toLocaleString('en-IN')}</b></div>)}</div>}</section>
+              </div>
+              <div className="report-export-grid"><section className="route-card report-card"><div className="report-icon">X</div><div><h3>{t('reports.receiptRegister')}</h3><p>{t('reports.receiptRegisterCopy')}</p><small>{t('reports.includes')}</small></div><button type="button" onClick={() => void openExcelExport()}>{t('reports.chooseRange')}</button></section><section className="route-card report-card"><div className="report-icon csv-icon">CSV</div><div><h3>{t('reports.csvTitle')}</h3><p>{t('reports.csvCopy')}</p><small>{t('reports.records', { count: reportReceipts.length + reportExpenses.length })}</small></div><button type="button" onClick={downloadTransactionsCsv}>{t('reports.downloadCsv')}</button></section></div>
+            </main>
+          )}
+
+          {activeRoute === 'settings' && (
+            <main className="route-page settings-page">
+              <div className="route-heading"><div><p>{t('settings.kicker')}</p><h2>{t('settings.title')}</h2><span>{t('settings.subtitle')}</span></div></div>
+              <div className="settings-grid">
+                <section className="route-card settings-card">
+                  <h3>{t('settings.language')}</h3>
+                  <p>{t('settings.languageCopy')}</p>
+                  <LanguageSwitcher />
+                </section>
+                <section className="route-card settings-card">
+                  <h3>{t('settings.appearance')}</h3>
+                  <p>{t('settings.appearanceCopy')}</p>
+                  <ThemeSwitcher value={themePreference} onChange={changeTheme} />
+                </section>
+                <section className="route-card settings-card preferences-card settings-wide">
+                  <h3>{t('settings.preferences')}</h3>
+                  <p>{t('settings.preferencesCopy')}</p>
+                  <div className="settings-preferences-grid">
+                    <label><span>{t('settings.defaultPage')}</span><select value={preferences.defaultRoute} onChange={(event) => updatePreference('defaultRoute', event.target.value as AppRoute)}>{(['dashboard', 'receipts', 'expenses', 'reports'] as AppRoute[]).map((route) => <option key={route} value={route}>{t(`nav.${route}`)}</option>)}</select></label>
+                    <label><span>{t('settings.defaultReceiptPayment')}</span><select value={preferences.receiptPaymentType} onChange={(event) => updatePreference('receiptPaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
+                    <label><span>{t('settings.defaultExpensePayment')}</span><select value={preferences.expensePaymentType} onChange={(event) => updatePreference('expensePaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
+                  </div>
+                </section>
+                <section className="route-card settings-card install-card">
+                  <h3>{t('settings.install')}</h3>
+                  <p>{t('settings.installCopy')}</p>
+                  {isStandalone ? (
+                    <span className="install-status">✓ {t('settings.installed')}</span>
+                  ) : installPrompt ? (
+                    <button className="pwa-install-button" type="button" onClick={() => void installApplication()}>{t('settings.installButton')}</button>
+                  ) : (
+                    <small className="install-help">{t('settings.installHelp')}</small>
+                  )}
+                  <small className="offline-save-note">{t('settings.offlineNote')}</small>
+                </section>
+                <section className="route-card settings-card data-status-card">
+                  <h3>{t('settings.dataStatus')}</h3>
+                  <p>{t('settings.dataStatusCopy')}</p>
+                  <dl><div><dt>{t('settings.receipts')}</dt><dd>{managementReceipts.length}</dd></div><div><dt>{t('settings.expenses')}</dt><dd>{expenses.length}</dd></div><div><dt>{t('settings.lastReceipt')}</dt><dd>{managementReceipts.at(-1)?.receiptNumber ?? '—'}</dd></div><div><dt>{t('settings.connection')}</dt><dd className={isDatabaseConnected ? 'connection-online' : isDatabaseConnected === false ? 'connection-offline' : ''}><i />{isDatabaseConnected === null ? t('connection.connecting') : isDatabaseConnected ? t('connection.online') : t('connection.offline')}</dd></div></dl>
+                </section>
+                <section className="route-card settings-card">
+                  <h3>{t('settings.operator')}</h3>
+                  <p>{t('settings.operatorCopy')}</p>
+                  <dl><div><dt>{t('settings.name')}</dt><dd>Mangesh</dd></div><div><dt>{t('settings.financialYear')}</dt><dd>{financialYear}</dd></div><div><dt>{t('settings.database')}</dt><dd><i /> Firebase Realtime Database</dd></div></dl>
+                </section>
+                <section className="route-card settings-card backup-card settings-wide"><h3>{t('settings.backup')}</h3><p>{t('settings.backupCopy')}</p><div className="settings-action-row"><button type="button" onClick={downloadBackup}>{t('settings.downloadBackup')}</button><button type="button" className="secondary-setting-button" onClick={() => void loadManagementData()}>{t('settings.refresh')}</button><button type="button" className="secondary-setting-button" onClick={() => navigateTo('reports')}>{t('settings.openReports')}</button></div></section>
+                <section className="route-card settings-card settings-wide"><h3>{t('settings.organization')}</h3><p>{t('header.organization')}</p><small>{t('settings.organizationCopy')}</small></section>
+              </div>
+            </main>
+          )}
+        </div>
+      </div>
+      </div>
+      <MobileBottomNavigation activeRoute={activeRoute} onNavigate={navigateTo} />
 
       {receiptForDownload && (
         <div className="saved-receipt-render" aria-hidden="true">

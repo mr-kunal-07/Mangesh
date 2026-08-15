@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="background" x1="58" y1="42" x2="454" y2="478" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8f3d17"/>
+      <stop offset="1" stop-color="#4a1b0c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(180 125) rotate(55) scale(370)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f59b45" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#f59b45" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
+  <circle cx="256" cy="256" r="164" fill="none" stroke="#ffd89d" stroke-opacity=".32" stroke-width="7"/>
+  <circle cx="256" cy="256" r="136" fill="#fff" fill-opacity=".06"/>
+  <text x="256" y="327" fill="#ffd89d" font-family="Nirmala UI, Noto Sans Devanagari, sans-serif" font-size="214" font-weight="700" text-anchor="middle">ॐ</text>
+</svg>
