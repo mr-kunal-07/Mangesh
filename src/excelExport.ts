@@ -8,6 +8,29 @@ const exportPaymentLabels: Record<PaymentType, string> = {
   cheque: 'Cheque / धनादेश',
 }
 
+let excelModulePromise: ReturnType<typeof importExcelModule> | null = null
+let templateBufferPromise: Promise<ArrayBuffer> | null = null
+
+function importExcelModule() {
+  return import('exceljs')
+}
+
+function loadExcelModule() {
+  excelModulePromise ??= importExcelModule()
+  return excelModulePromise
+}
+
+function loadTemplateBuffer() {
+  templateBufferPromise ??= fetch('/receipt-export-template.xlsx').then((response) => {
+    if (!response.ok) throw new Error('EXCEL_TEMPLATE_NOT_FOUND')
+    return response.arrayBuffer()
+  }).catch((error) => {
+    templateBufferPromise = null
+    throw error
+  })
+  return templateBufferPromise
+}
+
 function dateValue(value: string) {
   const [year, month, day] = value.split('-').map(Number)
   return new Date(year, month - 1, day)
@@ -16,12 +39,10 @@ function dateValue(value: string) {
 export async function buildReceiptWorkbook(receipts: ReceiptRecord[], language: AppLanguage) {
   if (receipts.length === 0) throw new Error('NO_RECEIPTS_TO_EXPORT')
 
-  const ExcelJS = await import('exceljs')
-  const templateResponse = await fetch('/receipt-export-template.xlsx')
-  if (!templateResponse.ok) throw new Error('EXCEL_TEMPLATE_NOT_FOUND')
+  const [ExcelJS, templateBuffer] = await Promise.all([loadExcelModule(), loadTemplateBuffer()])
 
   const workbook = new ExcelJS.Workbook()
-  await workbook.xlsx.load(await templateResponse.arrayBuffer())
+  await workbook.xlsx.load(templateBuffer.slice(0))
   const worksheet = workbook.getWorksheet('Receipt Register')
   if (!worksheet) throw new Error('EXCEL_TEMPLATE_SHEET_NOT_FOUND')
 

@@ -18,8 +18,16 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig)
 export const auth = getAuth(app)
 export const database = getDatabase(app)
 
-if (typeof window !== 'undefined') {
-  void import('firebase/analytics').then(async ({ getAnalytics, isSupported }) => {
-    if (await isSupported()) getAnalytics(app)
-  }).catch(() => undefined)
+if (typeof window !== 'undefined' && import.meta.env.PROD) {
+  const initializeAnalytics = () => {
+    void import('firebase/analytics').then(async ({ getAnalytics, isSupported }) => {
+      if (await isSupported()) getAnalytics(app)
+    }).catch(() => undefined)
+  }
+
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(initializeAnalytics, { timeout: 5_000 })
+  } else {
+    setTimeout(initializeAnalytics, 3_000)
+  }
 }

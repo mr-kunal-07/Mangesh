@@ -1,8 +1,8 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import type { User } from 'firebase/auth'
 import { useTranslation } from 'react-i18next'
-import receiptTemplate from './assets/receipt-template.jpeg'
+import receiptTemplate from './assets/receipt-template-optimized.jpeg'
 import LanguageSwitcher from './LanguageSwitcher'
 import ThemeSwitcher from './ThemeSwitcher'
 import DatePicker from './DatePicker'
@@ -13,6 +13,7 @@ import { ROUTE_PATHS, type AppRoute } from './appRoutes'
 import { getAllExpenses, saveExpense, type ExpenseCategory, type ExpenseRecord } from './expenseService'
 import { getSavedTheme, resolveTheme, THEME_STORAGE_KEY, type ThemePreference } from './theme'
 import { getSavedPreferences, savePreferences, type AppPreferences } from './preferences'
+import { cacheManagementData, getCachedManagementData } from './dataCache'
 import {
   formatReceiptNumber,
   getAllReceipts,
@@ -47,7 +48,6 @@ type ExpenseForm = {
   description: string
   amount: string
   paymentType: PaymentType
-  reference: string
 }
 
 type BeforeInstallPromptEvent = Event & {
@@ -57,6 +57,7 @@ type BeforeInstallPromptEvent = Event & {
 
 const EXPORT_RANGE_START = 0
 const EXPORT_RANGE_END = Number.MAX_SAFE_INTEGER
+const NOOP = () => undefined
 
 function routeFromPath(pathname: string, fallback: AppRoute = 'dashboard'): AppRoute {
   const match = (Object.entries(ROUTE_PATHS) as Array<[AppRoute, string]>).find(([, path]) => path === pathname)
@@ -76,6 +77,36 @@ function csvCell(value: string | number) {
   let safeValue = String(value ?? '')
   if (/^[=+\-@]/.test(safeValue)) safeValue = `'${safeValue}`
   return `"${safeValue.replace(/"/g, '""')}"`
+}
+
+function ExcelReportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path className="report-icon-sheet" d="M9 4.5h10v15H9z" />
+      <path className="report-icon-grid" d="M13 8h6M13 12h6M13 16h6M16 4.5v15" />
+      <path className="report-icon-panel" d="M4 7h10v10H4z" />
+      <path className="report-icon-mark" d="m7 10 4 4m0-4-4 4" />
+    </svg>
+  )
+}
+
+function CsvReportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path className="report-icon-file" d="M6 3.5h8l4 4V20.5H6z" />
+      <path className="report-icon-fold" d="M14 3.5v4h4" />
+      <path className="report-icon-lines" d="M9 11h6M9 14h6M9 17h4" />
+    </svg>
+  )
+}
+
+function ListLoadingSkeleton() {
+  const { t } = useTranslation()
+  return (
+    <div className="list-loading-skeleton" role="status" aria-label={t('app.loadingRecords')}>
+      {Array.from({ length: 4 }, (_, index) => <span key={index}><i /><b /></span>)}
+    </div>
+  )
 }
 
 const marathiNumbers = [
@@ -322,7 +353,7 @@ type ReceiptDocumentProps = {
   amountInWords: string
 }
 
-const ReceiptDocument = forwardRef<HTMLElement, ReceiptDocumentProps>(function ReceiptDocument({
+const ReceiptDocument = memo(forwardRef<HTMLElement, ReceiptDocumentProps>(function ReceiptDocument({
   receiptNumber,
   name,
   mobile,
@@ -335,7 +366,7 @@ const ReceiptDocument = forwardRef<HTMLElement, ReceiptDocumentProps>(function R
   const { t } = useTranslation()
   return (
     <article className="receipt-page" ref={ref}>
-      <img className="receipt-background" src={receiptTemplate} alt="Om Sainath Seva Mandal receipt template" />
+      <img className="receipt-background" src={receiptTemplate} alt={t('receipt.templateAlt')} decoding="async" />
       <div className="receipt-content">
         <div className="receipt-title-row">
           <div className="receipt-meta"><span>{t('receipt.number')}</span><strong>{receiptNumber || '—'}</strong></div>
@@ -359,7 +390,7 @@ const ReceiptDocument = forwardRef<HTMLElement, ReceiptDocumentProps>(function R
       </div>
     </article>
   )
-})
+}))
 
 type ExpenseVoucherDocumentProps = {
   voucherNumber: string
@@ -368,24 +399,22 @@ type ExpenseVoucherDocumentProps = {
   paymentTypeLabel: string
   expenseDate: string
   amount: string | number
-  reference: string
   amountInWords: string
 }
 
-const ExpenseVoucherDocument = forwardRef<HTMLElement, ExpenseVoucherDocumentProps>(function ExpenseVoucherDocument({
+const ExpenseVoucherDocument = memo(forwardRef<HTMLElement, ExpenseVoucherDocumentProps>(function ExpenseVoucherDocument({
   voucherNumber,
   description,
   categoryLabel,
   paymentTypeLabel,
   expenseDate,
   amount,
-  reference,
   amountInWords,
 }, ref) {
   const { t } = useTranslation()
   return (
     <article className="receipt-page" ref={ref}>
-      <img className="receipt-background" src={receiptTemplate} alt="Om Sainath Seva Mandal expense voucher template" />
+      <img className="receipt-background" src={receiptTemplate} alt={t('expense.templateAlt')} decoding="async" />
       <div className="receipt-content">
         <div className="receipt-title-row">
           <div className="receipt-meta"><span>{t('expense.voucherNumber')}</span><strong>{voucherNumber}</strong></div>
@@ -399,23 +428,31 @@ const ExpenseVoucherDocument = forwardRef<HTMLElement, ExpenseVoucherDocumentPro
             <div><span>{t('expense.paymentType')}:</span><strong>{paymentTypeLabel}</strong></div>
             <div className="receipt-amount"><span>{t('expense.amount')}:</span><strong>{formatAmount(String(amount))}</strong></div>
           </div>
-          <div className="receipt-row receipt-row-split">
-            <div><span>{t('expense.date')}:</span><strong>{formatReceiptDate(expenseDate)}</strong></div>
-            <div className="receipt-reference"><span>{t('expense.reference')}:</span><strong>{reference || '—'}</strong></div>
-          </div>
+          <div className="receipt-row receipt-row-full"><span>{t('expense.date')}:</span><strong>{formatReceiptDate(expenseDate)}</strong></div>
           <div className="receipt-row receipt-row-full receipt-words"><span>{t('form.amountWords')}:</span><strong>{amountInWords}</strong></div>
         </div>
         <p className="computer-note">{t('receipt.computerNote')}</p>
       </div>
     </article>
   )
-})
+}))
 
-async function createReceiptPdf(element: HTMLElement) {
-  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+function importPdfDependencies() {
+  return Promise.all([
     import('html2canvas'),
     import('jspdf'),
   ])
+}
+
+let pdfDependenciesPromise: ReturnType<typeof importPdfDependencies> | null = null
+
+function loadPdfDependencies() {
+  pdfDependenciesPromise ??= importPdfDependencies()
+  return pdfDependenciesPromise
+}
+
+async function createReceiptPdf(element: HTMLElement) {
+  const [{ default: html2canvas }, { jsPDF }] = await loadPdfDependencies()
   await document.fonts.ready
   const images = Array.from(element.querySelectorAll('img'))
   await Promise.all(
@@ -430,18 +467,18 @@ async function createReceiptPdf(element: HTMLElement) {
   )
 
   const canvas = await html2canvas(element, {
-    scale: 3,
+    scale: window.devicePixelRatio > 1 ? 2.2 : 2,
     useCORS: true,
     backgroundColor: '#fffdf7',
     logging: false,
     imageTimeout: 20_000,
   })
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
-  pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, 210, 297)
+  pdf.addImage(canvas.toDataURL('image/jpeg', 0.93), 'JPEG', 0, 0, 210, 297)
   return pdf
 }
 
-function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void }) {
+const AppHeader = memo(function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void }) {
   const { t } = useTranslation()
   return (
     <header className="app-header">
@@ -468,7 +505,7 @@ function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void
       </div>
     </header>
   )
-}
+})
 
 function App() {
   const { t, i18n } = useTranslation()
@@ -476,6 +513,15 @@ function App() {
   const expenseVoucherRef = useRef<HTMLElement>(null)
   const savedReceiptRef = useRef<HTMLElement>(null)
   const financialYear = useMemo(() => getFinancialYear(), [])
+  const [initialManagementCache] = useState(getCachedManagementData)
+  const initialYearReceipts = useMemo(
+    () => initialManagementCache.receipts
+      .filter((receipt) => receipt.financialYear === financialYear)
+      .sort((a, b) => a.sequence - b.sequence),
+    [financialYear, initialManagementCache.receipts],
+  )
+  const hasManagementDataRef = useRef(initialManagementCache.savedAt > 0)
+  const managementLoadPromiseRef = useRef<Promise<void> | null>(null)
   const language = ((i18n.resolvedLanguage ?? i18n.language).split('-')[0] === 'en' ? 'en' : 'mr') as AppLanguage
   const [preferences, setPreferences] = useState<AppPreferences>(getSavedPreferences)
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => routeFromPath(window.location.pathname, preferences.defaultRoute))
@@ -503,12 +549,12 @@ function App() {
   const [loginPassword, setLoginPassword] = useState('')
   const [loginError, setLoginError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
-  const [recentReceipts, setRecentReceipts] = useState<ReceiptRecord[]>([])
+  const [recentReceipts, setRecentReceipts] = useState<ReceiptRecord[]>(() => initialYearReceipts.slice(0, 5))
   const [historyError, setHistoryError] = useState('')
   const [historyPage, setHistoryPage] = useState(1)
   const [historyCursors, setHistoryCursors] = useState<Array<string | undefined>>([undefined])
-  const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null)
-  const [historyHasNextPage, setHistoryHasNextPage] = useState(false)
+  const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(() => initialYearReceipts.slice(0, 5).at(-1) ? String(initialYearReceipts.slice(0, 5).at(-1)?.sequence).padStart(6, '0') : null)
+  const [historyHasNextPage, setHistoryHasNextPage] = useState(() => initialYearReceipts.length > 5)
   const [isHistoryLoading, setIsHistoryLoading] = useState(false)
   const [viewReceipt, setViewReceipt] = useState<ReceiptRecord | null>(null)
   const [receiptForDownload, setReceiptForDownload] = useState<ReceiptRecord | null>(null)
@@ -516,21 +562,22 @@ function App() {
   const [recordDownloadError, setRecordDownloadError] = useState('')
   const [receiptSaved, setReceiptSaved] = useState(false)
   const [showExcelExport, setShowExcelExport] = useState(false)
-  const [allReceipts, setAllReceipts] = useState<ReceiptRecord[]>([])
+  const [allReceipts, setAllReceipts] = useState<ReceiptRecord[]>(initialManagementCache.receipts)
   const [exportYear, setExportYear] = useState(financialYear)
   const [fromSequence, setFromSequence] = useState(EXPORT_RANGE_START)
   const [toSequence, setToSequence] = useState(EXPORT_RANGE_END)
   const [isExcelLoading, setIsExcelLoading] = useState(false)
   const [isExcelDownloading, setIsExcelDownloading] = useState(false)
   const [excelMessage, setExcelMessage] = useState('')
-  const [managementReceipts, setManagementReceipts] = useState<ReceiptRecord[]>([])
-  const [expenses, setExpenses] = useState<ExpenseRecord[]>([])
-  const [isManagementLoading, setIsManagementLoading] = useState(false)
+  const [managementReceipts, setManagementReceipts] = useState<ReceiptRecord[]>(initialManagementCache.receipts)
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>(initialManagementCache.expenses)
+  const [isManagementLoading, setIsManagementLoading] = useState(initialManagementCache.savedAt === 0)
   const [managementError, setManagementError] = useState('')
   const [isDatabaseConnected, setIsDatabaseConnected] = useState<boolean | null>(null)
+  const [isOfflineConfirmed, setIsOfflineConfirmed] = useState(false)
   const [reportYear, setReportYear] = useState(financialYear)
   const [expenseForm, setExpenseForm] = useState<ExpenseForm>({
-    expenseDate: todayForInput(), category: 'festival', description: '', amount: '', paymentType: preferences.expensePaymentType, reference: '',
+    expenseDate: todayForInput(), category: 'festival', description: '', amount: '', paymentType: preferences.expensePaymentType,
   })
   const [expenseMessage, setExpenseMessage] = useState('')
   const [expenseError, setExpenseError] = useState('')
@@ -647,13 +694,19 @@ function App() {
 
   useEffect(() => {
     document.title = `${t(`nav.${activeRoute}`)} | ${t('header.organization')}`
+    document.documentElement.lang = language
+    document.documentElement.dir = 'ltr'
+    document.querySelector<HTMLMetaElement>('meta[name="description"]')?.setAttribute('content', t('app.description'))
   }, [activeRoute, language, t])
 
   const navigateTo = useCallback((route: AppRoute) => {
-    window.history.pushState({}, '', ROUTE_PATHS[route])
-    setActiveRoute(route)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [])
+    if (route !== activeRoute) {
+      window.history.pushState({}, '', ROUTE_PATHS[route])
+      setActiveRoute(route)
+    }
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' }))
+  }, [activeRoute])
 
   const changeTheme = useCallback((theme: ThemePreference) => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme)
@@ -686,9 +739,9 @@ function App() {
 
   const downloadTransactionsCsv = () => {
     const rows: Array<Array<string | number>> = [
-      ['Type', 'Date', 'Number / Reference', 'Name / Description', 'Payment / Category', 'Amount'],
-      ...reportReceipts.map((receipt) => ['Receipt', receipt.paymentDate, receipt.receiptNumber, receipt.name, paymentLabels[receipt.paymentType], Number(receipt.amount)]),
-      ...reportExpenses.map((expense) => ['Expense', expense.expenseDate, expense.reference, expense.description, categoryLabels[expense.category], -Number(expense.amount)]),
+      [t('reports.csv.type'), t('reports.csv.date'), t('reports.csv.number'), t('reports.csv.details'), t('reports.csv.method'), t('reports.csv.amount')],
+      ...reportReceipts.map((receipt) => [t('reports.csv.receipt'), receipt.paymentDate, receipt.receiptNumber, receipt.name, paymentLabels[receipt.paymentType], Number(receipt.amount)]),
+      ...reportExpenses.map((expense) => [t('reports.csv.expense'), expense.expenseDate, '', expense.description, categoryLabels[expense.category], -Number(expense.amount)]),
     ]
     const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`
     downloadTextFile(`sainath-transactions-${reportYear}.csv`, csv, 'text/csv;charset=utf-8')
@@ -730,19 +783,32 @@ function App() {
     }
   }, [])
 
-  const loadManagementData = useCallback(async () => {
-    setIsManagementLoading(true)
-    setManagementError('')
-    try {
-      const [receiptRecords, expenseRecords] = await Promise.all([getAllReceipts(), getAllExpenses()])
-      setManagementReceipts(receiptRecords)
-      setExpenses(expenseRecords)
-    } catch (error) {
-      console.error(error)
-      setManagementError(firebaseErrorMessage(error, (key) => t(key)))
-    } finally {
-      setIsManagementLoading(false)
-    }
+  const loadManagementData = useCallback(() => {
+    if (managementLoadPromiseRef.current) return managementLoadPromiseRef.current
+
+    const loadPromise = (async () => {
+      if (!hasManagementDataRef.current) setIsManagementLoading(true)
+      setManagementError('')
+      try {
+        const [receiptRecords, expenseRecords] = await Promise.all([getAllReceipts(), getAllExpenses()])
+        setManagementReceipts(receiptRecords)
+        setExpenses(expenseRecords)
+        setAllReceipts(receiptRecords)
+        hasManagementDataRef.current = true
+        cacheManagementData(receiptRecords, expenseRecords)
+      } catch (error) {
+        console.error(error)
+        setManagementError(firebaseErrorMessage(error, (key) => t(key)))
+      } finally {
+        setIsManagementLoading(false)
+      }
+    })()
+
+    managementLoadPromiseRef.current = loadPromise
+    void loadPromise.finally(() => {
+      if (managementLoadPromiseRef.current === loadPromise) managementLoadPromiseRef.current = null
+    })
+    return loadPromise
   }, [t])
 
   const refreshNextReceiptNumber = useCallback(async () => {
@@ -773,7 +839,51 @@ function App() {
     setAuthReady(true)
   }), [])
 
-  useEffect(() => observeDatabaseConnection(setIsDatabaseConnected), [])
+  useEffect(() => {
+    let connected: boolean | null = null
+    let offlineTimer: number | null = null
+
+    const clearOfflineTimer = () => {
+      if (offlineTimer !== null) window.clearTimeout(offlineTimer)
+      offlineTimer = null
+    }
+
+    const confirmOfflineAfterDelay = () => {
+      clearOfflineTimer()
+      setIsOfflineConfirmed(false)
+      offlineTimer = window.setTimeout(() => setIsOfflineConfirmed(true), 2_000)
+    }
+
+    const handleDatabaseConnection = (nextConnected: boolean) => {
+      connected = nextConnected
+      setIsDatabaseConnected(nextConnected)
+      clearOfflineTimer()
+      if (nextConnected) setIsOfflineConfirmed(false)
+      else if (!navigator.onLine) setIsOfflineConfirmed(true)
+      else confirmOfflineAfterDelay()
+    }
+
+    const handleBrowserOffline = () => {
+      if (connected !== true) {
+        clearOfflineTimer()
+        setIsOfflineConfirmed(true)
+      }
+    }
+
+    const handleBrowserOnline = () => {
+      if (connected !== true) confirmOfflineAfterDelay()
+    }
+
+    const stopObservingConnection = observeDatabaseConnection(handleDatabaseConnection)
+    window.addEventListener('online', handleBrowserOnline)
+    window.addEventListener('offline', handleBrowserOffline)
+    return () => {
+      clearOfflineTimer()
+      stopObservingConnection()
+      window.removeEventListener('online', handleBrowserOnline)
+      window.removeEventListener('offline', handleBrowserOffline)
+    }
+  }, [])
 
   useEffect(() => {
     if (!authUser) return
@@ -882,7 +992,7 @@ function App() {
     }
   }
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await logoutOperator()
       setStatus('')
@@ -890,7 +1000,7 @@ function App() {
     } catch (error) {
       console.error(error)
     }
-  }
+  }, [])
 
   const downloadPdf = async () => {
     if (!authUser) {
@@ -969,6 +1079,18 @@ function App() {
     setExpenseMessage('')
   }
 
+  const resetExpenseForm = () => {
+    setExpenseForm({
+      expenseDate: todayForInput(),
+      category: 'festival',
+      description: '',
+      amount: '',
+      paymentType: preferences.expensePaymentType,
+    })
+    setExpenseError('')
+    setExpenseMessage('')
+  }
+
   const submitExpense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!authUser) return
@@ -988,11 +1110,11 @@ function App() {
         description: expenseForm.description.trim(),
         amount: Number(expenseForm.amount),
         paymentType: expenseForm.paymentType,
-        reference: expenseForm.reference.trim(),
+        reference: '',
         createdBy: authUser.uid,
         createdByName: 'Mangesh',
       })
-      setExpenseForm({ expenseDate: todayForInput(), category: 'festival', description: '', amount: '', paymentType: preferences.expensePaymentType, reference: '' })
+      setExpenseForm({ expenseDate: todayForInput(), category: 'festival', description: '', amount: '', paymentType: preferences.expensePaymentType })
       setExpenseMessage(t('expense.saved'))
       await loadManagementData()
     } catch (error) {
@@ -1070,8 +1192,7 @@ function App() {
   if (!authReady) {
     return (
       <div className="app-shell">
-        <AppHeader user={null} onLogout={() => undefined} />
-        <main className="auth-page"><div className="auth-loader" aria-label="Loading" /></main>
+        <AppHeader user={null} onLogout={NOOP} />
       </div>
     )
   }
@@ -1079,7 +1200,7 @@ function App() {
   if (!authUser) {
     return (
       <div className="app-shell">
-        <AppHeader user={null} onLogout={() => undefined} />
+        <AppHeader user={null} onLogout={NOOP} />
         <main className="auth-page">
           <form className="login-card" onSubmit={handleLogin}>
             <div className="login-icon" aria-hidden="true">ॐ</div>
@@ -1087,7 +1208,7 @@ function App() {
             <h2>{t('auth.title')}</h2>
             <p className="login-copy">{t('auth.copy')}</p>
             <label className="field">
-              <span>{t('auth.operatorId')} <small>Operator ID</small></span>
+              <span>{t('auth.operatorId')}</span>
               <input
                 value={loginId}
                 onChange={(event) => setLoginId(event.target.value)}
@@ -1096,7 +1217,7 @@ function App() {
               />
             </label>
             <label className="field">
-              <span>{t('auth.password')} <small>Password</small></span>
+              <span>{t('auth.password')}</span>
               <input
                 type="password"
                 value={loginPassword}
@@ -1118,25 +1239,27 @@ function App() {
 
   return (
     <div className="app-shell management-shell">
-      <AppHeader user={authUser} onLogout={() => void handleLogout()} />
+      <AppHeader user={authUser} onLogout={handleLogout} />
       <div className="management-body">
-        <DesktopSidebar activeRoute={activeRoute} onNavigate={navigateTo} />
+        <DesktopSidebar activeRoute={activeRoute} onNavigate={navigateTo} onLogout={handleLogout} />
         <div className="management-main">
         <div className="management-content">
-          {isDatabaseConnected === false && <div className="offline-banner" role="status"><span>!</span><div><strong>{t('connection.offline')}</strong><p>{t('connection.offlineCopy')}</p></div></div>}
+          {isDatabaseConnected !== true && isOfflineConfirmed && <div className="offline-banner" role="status"><span>!</span><div><strong>{t('connection.offline')}</strong><p>{t('connection.offlineCopy')}</p></div></div>}
           {activeRoute === 'dashboard' && (
             <main className="route-page dashboard-page">
               <div className="route-heading"><div><p>{t('dashboard.kicker')}</p><h2>{t('dashboard.title')}</h2><span>{t('dashboard.subtitle', { year: financialYear })}</span></div><button type="button" onClick={() => navigateTo('receipts')}>{t('dashboard.newReceipt')}</button></div>
               {managementError && <p className="route-error">{managementError}</p>}
-              <section className="stat-grid" aria-label={t('dashboard.summary')}>
-                <article><span>{t('dashboard.collections')}</span><strong>₹ {totalCollections.toLocaleString('en-IN')}</strong><small>{currentYearReceipts.length} {t('dashboard.receiptsCount')}</small></article>
-                <article><span>{t('dashboard.expenses')}</span><strong>₹ {totalExpenses.toLocaleString('en-IN')}</strong><small>{currentYearExpenses.length} {t('dashboard.entries')}</small></article>
-                <article className="stat-balance"><span>{t('dashboard.balance')}</span><strong>₹ {(totalCollections - totalExpenses).toLocaleString('en-IN')}</strong><small>{t('dashboard.available')}</small></article>
-                <article><span>{t('dashboard.latestReceipt')}</span><strong>{currentYearReceipts.at(-1)?.receiptNumber.split('/').at(-1) ?? '—'}</strong><small>{currentYearReceipts.at(-1)?.name ?? t('dashboard.noData')}</small></article>
+              <section className="stat-grid" aria-label={t('dashboard.summary')} aria-busy={isManagementLoading}>
+                {isManagementLoading ? Array.from({ length: 4 }, (_, index) => <article className="data-box-loading" key={index} aria-hidden="true"><i /><b /><span /></article>) : <>
+                  <article><span>{t('dashboard.collections')}</span><strong>₹ {totalCollections.toLocaleString('en-IN')}</strong><small>{currentYearReceipts.length} {t('dashboard.receiptsCount')}</small></article>
+                  <article><span>{t('dashboard.expenses')}</span><strong>₹ {totalExpenses.toLocaleString('en-IN')}</strong><small>{currentYearExpenses.length} {t('dashboard.entries')}</small></article>
+                  <article className="stat-balance"><span>{t('dashboard.balance')}</span><strong>₹ {(totalCollections - totalExpenses).toLocaleString('en-IN')}</strong><small>{t('dashboard.available')}</small></article>
+                  <article><span>{t('dashboard.latestReceipt')}</span><strong>{currentYearReceipts.at(-1)?.receiptNumber.split('/').at(-1) ?? '—'}</strong><small>{currentYearReceipts.at(-1)?.name ?? t('dashboard.noData')}</small></article>
+                </>}
               </section>
               <div className="dashboard-grid">
-                <section className="dashboard-card"><div className="dashboard-card-heading"><div><h3>{t('dashboard.recentReceipts')}</h3><p>{t('dashboard.recentReceiptsCopy')}</p></div><button type="button" onClick={() => navigateTo('receipts')}>{t('dashboard.viewAll')}</button></div>{isManagementLoading ? <div className="route-loader"><div className="auth-loader" /></div> : recentDashboardReceipts.length === 0 ? <p className="dashboard-empty">{t('dashboard.noReceipts')}</p> : <div className="activity-list">{recentDashboardReceipts.map((receipt) => <article key={receipt.id}><span className="activity-icon income">₹</span><div><strong>{receipt.name}</strong><small>{receipt.receiptNumber} · {formatReceiptDate(receipt.paymentDate)}</small></div><b>+₹ {Number(receipt.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
-                <section className="dashboard-card"><div className="dashboard-card-heading"><div><h3>{t('dashboard.recentExpenses')}</h3><p>{t('dashboard.recentExpensesCopy')}</p></div><button type="button" onClick={() => navigateTo('expenses')}>{t('dashboard.manage')}</button></div>{isManagementLoading ? <div className="route-loader"><div className="auth-loader" /></div> : currentYearExpenses.length === 0 ? <p className="dashboard-empty">{t('dashboard.noExpenses')}</p> : <div className="activity-list">{currentYearExpenses.slice(0, 5).map((expense) => <article key={expense.id}><span className="activity-icon expense">₹</span><div><strong>{expense.description}</strong><small>{categoryLabels[expense.category]} · {formatReceiptDate(expense.expenseDate)}</small></div><b className="expense-value">−₹ {Number(expense.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
+                <section className="dashboard-card"><div className="dashboard-card-heading"><div><h3>{t('dashboard.recentReceipts')}</h3><p>{t('dashboard.recentReceiptsCopy')}</p></div><button type="button" onClick={() => navigateTo('receipts')}>{t('dashboard.viewAll')}</button></div>{isManagementLoading ? <ListLoadingSkeleton /> : recentDashboardReceipts.length === 0 ? <p className="dashboard-empty">{t('dashboard.noReceipts')}</p> : <div className="activity-list">{recentDashboardReceipts.map((receipt) => <article key={receipt.id}><span className="activity-icon income">₹</span><div><strong>{receipt.name}</strong><small>{receipt.receiptNumber} · {formatReceiptDate(receipt.paymentDate)}</small></div><b>+₹ {Number(receipt.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
+                <section className="dashboard-card"><div className="dashboard-card-heading"><div><h3>{t('dashboard.recentExpenses')}</h3><p>{t('dashboard.recentExpensesCopy')}</p></div><button type="button" onClick={() => navigateTo('expenses')}>{t('dashboard.manage')}</button></div>{isManagementLoading ? <ListLoadingSkeleton /> : currentYearExpenses.length === 0 ? <p className="dashboard-empty">{t('dashboard.noExpenses')}</p> : <div className="activity-list">{currentYearExpenses.slice(0, 5).map((expense) => <article key={expense.id}><span className="activity-icon expense">₹</span><div><strong>{expense.description}</strong><small>{categoryLabels[expense.category]} · {formatReceiptDate(expense.expenseDate)}</small></div><b className="expense-value">−₹ {Number(expense.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
               </div>
             </main>
           )}
@@ -1151,7 +1274,7 @@ function App() {
 
             <div className="form-grid">
               <label className="field field-wide receipt-number-field">
-                <span>{t('form.receiptNumber')} <small>{t('form.databaseSequence')}</small></span>
+                <span>{t('form.receiptNumber')}</span>
                 <div className="locked-input">
                   <input value={isNumberLoading ? t('form.loadingNumber') : databaseReady ? form.receiptNumber : t('form.rulesRequired')} readOnly />
                   <span title="Firebase database generated">DB</span>
@@ -1160,38 +1283,38 @@ function App() {
               </label>
 
               <label className="field field-wide">
-                <span>{t('form.name')} <small>{t('form.fullName')}</small></span>
+                <span>{t('form.name')}</span>
                 <input value={form.name} onChange={(event) => updateField('name', event.target.value)} placeholder={t('form.namePlaceholder')} aria-invalid={Boolean(errors.name)} />
                 {errors.name && <em>{errors.name}</em>}
               </label>
 
               <label className="field field-wide">
-                <span>{t('form.mobile')} <small>{t('form.mobileEnglish')}</small></span>
+                <span>{t('form.mobile')}</span>
                 <input value={form.mobile} onChange={(event) => updateField('mobile', event.target.value.replace(/\D/g, '').slice(0, 10))} inputMode="numeric" placeholder={t('form.mobilePlaceholder')} aria-invalid={Boolean(errors.mobile)} />
                 {errors.mobile && <em>{errors.mobile}</em>}
               </label>
 
               <label className="field">
-                <span>{t('form.paymentType')} <small>{t('form.paymentTypeEnglish')}</small></span>
+                <span>{t('form.paymentType')}</span>
                 <select value={form.paymentType} onChange={(event) => updateField('paymentType', event.target.value as PaymentType)}>
                   <option value="upi">{paymentLabels.upi}</option><option value="cash">{paymentLabels.cash}</option><option value="bank">{paymentLabels.bank}</option><option value="cheque">{paymentLabels.cheque}</option>
                 </select>
               </label>
 
               <div className="field">
-                <span>{t('form.paymentDate')} <small>{t('form.paymentDateEnglish')}</small></span>
+                <span>{t('form.paymentDate')}</span>
                 <DatePicker value={form.paymentDate} onChange={(value) => updateField('paymentDate', value)} label={t('form.paymentDate')} invalid={Boolean(errors.paymentDate)} />
                 {errors.paymentDate && <em>{errors.paymentDate}</em>}
               </div>
 
               <label className="field field-wide">
-                <span>{t('form.amount')} <small>{t('form.amountEnglish')}</small></span>
+                <span>{t('form.amount')}</span>
                 <div className="amount-input"><b>₹</b><input type="number" min="1" step="1" value={form.amount} onChange={(event) => updateField('amount', event.target.value)} placeholder="1000" aria-invalid={Boolean(errors.amount)} /></div>
                 {errors.amount && <em>{errors.amount}</em>}
               </label>
 
               <label className="field field-wide">
-                <span>{t('form.reference')} <small>{t('form.referenceEnglish')}</small></span>
+                <span>{t('form.reference')}</span>
                 <input value={form.reference} onChange={(event) => updateField('reference', event.target.value)} placeholder={t('form.referencePlaceholder')} />
               </label>
             </div>
@@ -1209,7 +1332,7 @@ function App() {
               <div><span className="step-badge">DB</span><h2>{t('history.title')}</h2></div>
               <div className="history-actions"><span>{t('history.records', { count: recentReceipts.length })}</span><button type="button" onClick={() => void openExcelExport()}>{t('history.excel')}</button></div>
             </div>
-            {isHistoryLoading ? <p className="history-empty">{t('history.loading')}</p> : historyError ? <p className="history-empty history-error">{historyError}</p> : recentReceipts.length === 0 ? (
+            {isHistoryLoading ? <ListLoadingSkeleton /> : historyError ? <p className="history-empty history-error">{historyError}</p> : recentReceipts.length === 0 ? (
               <p className="history-empty">{t('history.empty')}</p>
             ) : (
               <div className="history-results">
@@ -1262,62 +1385,70 @@ function App() {
           </main>}
 
           {activeRoute === 'expenses' && (
-            <main className="route-page expense-page">
-              <div className="route-heading"><div><p>{t('expense.kicker')}</p><h2>{t('expense.title')}</h2><span>{t('expense.subtitle')}</span></div></div>
-              <div className="expense-layout">
-                <form className="route-card expense-form-card" onSubmit={submitExpense}>
-                  <div className="route-card-heading"><div><h3>{t('expense.add')}</h3><p>{t('expense.addCopy')}</p></div><span>₹</span></div>
+            <main className="workspace expense-workspace">
+              <div className="left-column">
+                <form className="form-panel expense-form-card" onSubmit={submitExpense}>
+                  <div className="panel-heading">
+                    <div><span className="step-badge">01</span><h2>{t('expense.formTitle')}</h2></div>
+                    <button className="text-button" type="button" onClick={resetExpenseForm}>{t('expense.add')}</button>
+                  </div>
                   <div className="form-grid">
                     <div className="field"><span>{t('expense.date')}</span><DatePicker value={expenseForm.expenseDate} onChange={(value) => updateExpenseField('expenseDate', value)} label={t('expense.date')} /></div>
                     <label className="field"><span>{t('expense.category')}</span><select value={expenseForm.category} onChange={(event) => updateExpenseField('category', event.target.value as ExpenseCategory)}>{(Object.keys(categoryLabels) as ExpenseCategory[]).map((category) => <option key={category} value={category}>{categoryLabels[category]}</option>)}</select></label>
                     <label className="field field-wide"><span>{t('expense.description')}</span><input value={expenseForm.description} onChange={(event) => updateExpenseField('description', event.target.value)} placeholder={t('expense.descriptionPlaceholder')} /></label>
                     <label className="field"><span>{t('expense.amount')}</span><div className="amount-input"><b>₹</b><input type="number" min="1" step="1" value={expenseForm.amount} onChange={(event) => updateExpenseField('amount', event.target.value)} placeholder="1000" /></div></label>
                     <label className="field"><span>{t('expense.paymentType')}</span><select value={expenseForm.paymentType} onChange={(event) => updateExpenseField('paymentType', event.target.value as PaymentType)}><option value="cash">{paymentLabels.cash}</option><option value="upi">{paymentLabels.upi}</option><option value="bank">{paymentLabels.bank}</option><option value="cheque">{paymentLabels.cheque}</option></select></label>
-                    <label className="field field-wide"><span>{t('expense.reference')}</span><input value={expenseForm.reference} onChange={(event) => updateExpenseField('reference', event.target.value)} placeholder={t('expense.referencePlaceholder')} /></label>
                   </div>
                   {expenseError && <p className="expense-message error" role="alert">{expenseError}</p>}
                   {expenseMessage && <p className="expense-message success" role="status">{expenseMessage}</p>}
                   <button className="expense-save-button" type="submit" disabled={isExpenseSaving}>{isExpenseSaving ? t('expense.saving') : t('expense.save')}</button>
                 </form>
-                <section className="preview-panel expense-preview-card" aria-label={t('expense.previewTitle')}>
-                  <div className="preview-heading">
-                    <div><span className="step-badge">02</span><h2>{t('expense.previewTitle')}</h2></div>
-                    <span className="a4-badge">A4 • PDF</span>
+
+                <section className="history-panel expense-list-card">
+                  <div className="history-heading">
+                    <div><span className="step-badge">DB</span><h2>{t('expense.history')}</h2></div>
+                    <div className="history-actions"><span>{t('expense.historyCopy', { year: financialYear })}</span><strong className="expense-history-total">₹ {totalExpenses.toLocaleString('en-IN')}</strong></div>
                   </div>
-                  <div className="receipt-frame">
-                    <ExpenseVoucherDocument
-                      ref={expenseVoucherRef}
-                      voucherNumber={`EXP/${financialYear}/${t('expense.previewDraft')}`}
-                      description={expenseForm.description}
-                      categoryLabel={categoryLabels[expenseForm.category]}
-                      paymentTypeLabel={paymentLabels[expenseForm.paymentType]}
-                      expenseDate={expenseForm.expenseDate}
-                      amount={expenseForm.amount}
-                      reference={expenseForm.reference}
-                      amountInWords={expenseAmountInWords}
-                    />
-                  </div>
-                  <button className="expense-pdf-button" type="button" onClick={() => void downloadExpensePdf()} disabled={isExpensePdfDownloading}>
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" /></svg>
-                    {isExpensePdfDownloading ? t('expense.downloadingPdf') : t('expense.downloadPdf')}
-                  </button>
+                  {isManagementLoading ? <ListLoadingSkeleton /> : currentYearExpenses.length === 0 ? <p className="dashboard-empty">{t('expense.empty')}</p> : <div className="expense-list">{currentYearExpenses.map((expense) => <article key={expense.id}><span>{categoryLabels[expense.category]}</span><div><strong>{expense.description}</strong><small>{formatReceiptDate(expense.expenseDate)} · {paymentLabels[expense.paymentType]}</small></div><b>₹ {Number(expense.amount).toLocaleString('en-IN')}</b></article>)}</div>}
                 </section>
-                <section className="route-card expense-list-card"><div className="route-card-heading"><div><h3>{t('expense.history')}</h3><p>{t('expense.historyCopy', { year: financialYear })}</p></div><strong>₹ {totalExpenses.toLocaleString('en-IN')}</strong></div>{isManagementLoading ? <div className="route-loader"><div className="auth-loader" /></div> : currentYearExpenses.length === 0 ? <p className="dashboard-empty">{t('expense.empty')}</p> : <div className="expense-list">{currentYearExpenses.map((expense) => <article key={expense.id}><span>{categoryLabels[expense.category]}</span><div><strong>{expense.description}</strong><small>{formatReceiptDate(expense.expenseDate)} · {paymentLabels[expense.paymentType]}{expense.reference ? ` · ${expense.reference}` : ''}</small></div><b>₹ {Number(expense.amount).toLocaleString('en-IN')}</b></article>)}</div>}</section>
               </div>
+
+              <section className="preview-panel expense-preview-card" aria-label={t('expense.previewTitle')}>
+                <div className="preview-heading">
+                  <div><span className="step-badge">02</span><h2>{t('expense.previewTitle')}</h2></div>
+                  <span className="a4-badge">A4 • PDF</span>
+                </div>
+                <div className="receipt-frame">
+                  <ExpenseVoucherDocument
+                    ref={expenseVoucherRef}
+                    voucherNumber={`EXP/${financialYear}/${t('expense.previewDraft')}`}
+                    description={expenseForm.description}
+                    categoryLabel={categoryLabels[expenseForm.category]}
+                    paymentTypeLabel={paymentLabels[expenseForm.paymentType]}
+                    expenseDate={expenseForm.expenseDate}
+                    amount={expenseForm.amount}
+                    amountInWords={expenseAmountInWords}
+                  />
+                </div>
+                <button className="expense-pdf-button" type="button" onClick={() => void downloadExpensePdf()} disabled={isExpensePdfDownloading}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" /></svg>
+                  {isExpensePdfDownloading ? t('expense.downloadingPdf') : t('expense.downloadPdf')}
+                </button>
+              </section>
             </main>
           )}
 
           {activeRoute === 'reports' && (
             <main className="route-page reports-page">
               <div className="route-heading"><div><p>{t('reports.kicker')}</p><h2>{t('reports.title')}</h2><span>{t('reports.subtitle')}</span></div><div className="route-heading-actions"><button type="button" onClick={downloadTransactionsCsv}>{t('reports.downloadCsv')}</button><button type="button" onClick={() => void openExcelExport()}>{t('reports.download')}</button></div></div>
-              <section className="report-toolbar route-card"><label><span>{t('reports.year')}</span><select value={reportYear} onChange={(event) => setReportYear(event.target.value)}>{reportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label><div><strong>{reportReceipts.length + reportExpenses.length}</strong><span>{t('reports.transactions')}</span></div></section>
-              <section className="report-summary route-card"><div><span>{t('dashboard.collections')}</span><strong>₹ {reportCollectionsTotal.toLocaleString('en-IN')}</strong></div><div><span>{t('dashboard.expenses')}</span><strong>₹ {reportExpensesTotal.toLocaleString('en-IN')}</strong></div><div><span>{t('dashboard.balance')}</span><strong>₹ {(reportCollectionsTotal - reportExpensesTotal).toLocaleString('en-IN')}</strong></div><div><span>{t('reports.averageReceipt')}</span><strong>₹ {Math.round(reportReceipts.length ? reportCollectionsTotal / reportReceipts.length : 0).toLocaleString('en-IN')}</strong></div></section>
+              <section className="report-toolbar route-card"><label><span>{t('reports.year')}</span><select value={reportYear} onChange={(event) => setReportYear(event.target.value)}>{reportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label><div aria-busy={isManagementLoading}>{isManagementLoading ? <span className="inline-data-loading" aria-label={t('app.loadingRecords')} /> : <><strong>{reportReceipts.length + reportExpenses.length}</strong><span>{t('reports.transactions')}</span></>}</div></section>
+              <section className="report-summary route-card" aria-busy={isManagementLoading}>{isManagementLoading ? Array.from({ length: 4 }, (_, index) => <div className="report-summary-loading" key={index} aria-hidden="true"><i /><b /></div>) : <><div><span>{t('dashboard.collections')}</span><strong>₹ {reportCollectionsTotal.toLocaleString('en-IN')}</strong></div><div><span>{t('dashboard.expenses')}</span><strong>₹ {reportExpensesTotal.toLocaleString('en-IN')}</strong></div><div><span>{t('dashboard.balance')}</span><strong>₹ {(reportCollectionsTotal - reportExpensesTotal).toLocaleString('en-IN')}</strong></div><div><span>{t('reports.averageReceipt')}</span><strong>₹ {Math.round(reportReceipts.length ? reportCollectionsTotal / reportReceipts.length : 0).toLocaleString('en-IN')}</strong></div></>}</section>
               <div className="report-analysis-grid">
-                <section className="route-card analysis-card"><div className="analysis-heading"><h3>{t('reports.paymentBreakdown')}</h3><p>{t('reports.paymentCopy')}</p></div>{paymentBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noActivity')}</p> : <div className="breakdown-list">{paymentBreakdown.map((item) => <div className="breakdown-row" key={item.key}><div><span>{item.label}</span><small>{t('reports.records', { count: item.count })}</small></div><strong>₹ {item.amount.toLocaleString('en-IN')}</strong><i><b style={{ width: `${reportCollectionsTotal ? (item.amount / reportCollectionsTotal) * 100 : 0}%` }} /></i></div>)}</div>}</section>
-                <section className="route-card analysis-card"><div className="analysis-heading"><h3>{t('reports.expenseBreakdown')}</h3><p>{t('reports.expenseCopy')}</p></div>{expenseBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noExpenses')}</p> : <div className="breakdown-list expense-breakdown">{expenseBreakdown.map((item) => <div className="breakdown-row" key={item.key}><div><span>{item.label}</span><small>{t('reports.records', { count: item.count })}</small></div><strong>₹ {item.amount.toLocaleString('en-IN')}</strong><i><b style={{ width: `${reportExpensesTotal ? (item.amount / reportExpensesTotal) * 100 : 0}%` }} /></i></div>)}</div>}</section>
-                <section className="route-card analysis-card monthly-analysis"><div className="analysis-heading"><h3>{t('reports.monthly')}</h3><p>{t('reports.monthlyCopy')}</p></div>{monthlyBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noActivity')}</p> : <div className="monthly-list"><div className="monthly-header"><span>{t('reports.year')}</span><span>{t('reports.collectionsShort')}</span><span>{t('reports.expensesShort')}</span><span>{t('reports.net')}</span></div>{monthlyBreakdown.map((item) => <div className="monthly-row" key={item.month}><strong>{new Intl.DateTimeFormat(language === 'en' ? 'en-IN' : 'mr-IN', { month: 'short', year: 'numeric' }).format(new Date(`${item.month}-01T00:00:00`))}</strong><span className="income-value"><small>{t('reports.collectionsShort')}</small>₹ {item.collections.toLocaleString('en-IN')}</span><span className="expense-value"><small>{t('reports.expensesShort')}</small>₹ {item.expenses.toLocaleString('en-IN')}</span><b><small>{t('reports.net')}</small>₹ {(item.collections - item.expenses).toLocaleString('en-IN')}</b></div>)}</div>}</section>
+                <section className="route-card analysis-card"><div className="analysis-heading"><h3>{t('reports.paymentBreakdown')}</h3><p>{t('reports.paymentCopy')}</p></div>{isManagementLoading ? <ListLoadingSkeleton /> : paymentBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noActivity')}</p> : <div className="breakdown-list">{paymentBreakdown.map((item) => <div className="breakdown-row" key={item.key}><div><span>{item.label}</span><small>{t('reports.records', { count: item.count })}</small></div><strong>₹ {item.amount.toLocaleString('en-IN')}</strong><i><b style={{ width: `${reportCollectionsTotal ? (item.amount / reportCollectionsTotal) * 100 : 0}%` }} /></i></div>)}</div>}</section>
+                <section className="route-card analysis-card"><div className="analysis-heading"><h3>{t('reports.expenseBreakdown')}</h3><p>{t('reports.expenseCopy')}</p></div>{isManagementLoading ? <ListLoadingSkeleton /> : expenseBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noExpenses')}</p> : <div className="breakdown-list expense-breakdown">{expenseBreakdown.map((item) => <div className="breakdown-row" key={item.key}><div><span>{item.label}</span><small>{t('reports.records', { count: item.count })}</small></div><strong>₹ {item.amount.toLocaleString('en-IN')}</strong><i><b style={{ width: `${reportExpensesTotal ? (item.amount / reportExpensesTotal) * 100 : 0}%` }} /></i></div>)}</div>}</section>
+                <section className="route-card analysis-card monthly-analysis"><div className="analysis-heading"><h3>{t('reports.monthly')}</h3><p>{t('reports.monthlyCopy')}</p></div>{isManagementLoading ? <ListLoadingSkeleton /> : monthlyBreakdown.length === 0 ? <p className="dashboard-empty">{t('reports.noActivity')}</p> : <div className="monthly-list"><div className="monthly-header"><span>{t('reports.year')}</span><span>{t('reports.collectionsShort')}</span><span>{t('reports.expensesShort')}</span><span>{t('reports.net')}</span></div>{monthlyBreakdown.map((item) => <div className="monthly-row" key={item.month}><strong>{new Intl.DateTimeFormat(language === 'en' ? 'en-IN' : 'mr-IN', { month: 'short', year: 'numeric' }).format(new Date(`${item.month}-01T00:00:00`))}</strong><span className="income-value"><small>{t('reports.collectionsShort')}</small>₹ {item.collections.toLocaleString('en-IN')}</span><span className="expense-value"><small>{t('reports.expensesShort')}</small>₹ {item.expenses.toLocaleString('en-IN')}</span><b><small>{t('reports.net')}</small>₹ {(item.collections - item.expenses).toLocaleString('en-IN')}</b></div>)}</div>}</section>
               </div>
-              <div className="report-export-grid"><section className="route-card report-card"><div className="report-icon">X</div><div><h3>{t('reports.receiptRegister')}</h3><p>{t('reports.receiptRegisterCopy')}</p><small>{t('reports.includes')}</small></div><button type="button" onClick={() => void openExcelExport()}>{t('reports.chooseRange')}</button></section><section className="route-card report-card"><div className="report-icon csv-icon">CSV</div><div><h3>{t('reports.csvTitle')}</h3><p>{t('reports.csvCopy')}</p><small>{t('reports.records', { count: reportReceipts.length + reportExpenses.length })}</small></div><button type="button" onClick={downloadTransactionsCsv}>{t('reports.downloadCsv')}</button></section></div>
+              <div className="report-export-grid"><section className="route-card report-card"><div className="report-icon"><ExcelReportIcon /></div><div><h3>{t('reports.receiptRegister')}</h3><p>{t('reports.receiptRegisterCopy')}</p></div><button type="button" onClick={() => void openExcelExport()}>{t('reports.chooseRange')}</button></section><section className="route-card report-card"><div className="report-icon csv-icon"><CsvReportIcon /></div><div><h3>{t('reports.csvTitle')}</h3><p>{t('reports.csvCopy')}</p><small>{t('reports.records', { count: reportReceipts.length + reportExpenses.length })}</small></div><button type="button" onClick={downloadTransactionsCsv}>{t('reports.downloadCsv')}</button></section></div>
             </main>
           )}
 
@@ -1325,24 +1456,10 @@ function App() {
             <main className="route-page settings-page">
               <div className="route-heading"><div><p>{t('settings.kicker')}</p><h2>{t('settings.title')}</h2><span>{t('settings.subtitle')}</span></div></div>
               <div className="settings-grid">
-                <section className="route-card settings-card">
-                  <h3>{t('settings.language')}</h3>
-                  <p>{t('settings.languageCopy')}</p>
-                  <LanguageSwitcher />
-                </section>
-                <section className="route-card settings-card">
+                <section className="route-card settings-card appearance-card">
                   <h3>{t('settings.appearance')}</h3>
                   <p>{t('settings.appearanceCopy')}</p>
                   <ThemeSwitcher value={themePreference} onChange={changeTheme} />
-                </section>
-                <section className="route-card settings-card preferences-card settings-wide">
-                  <h3>{t('settings.preferences')}</h3>
-                  <p>{t('settings.preferencesCopy')}</p>
-                  <div className="settings-preferences-grid">
-                    <label><span>{t('settings.defaultPage')}</span><select value={preferences.defaultRoute} onChange={(event) => updatePreference('defaultRoute', event.target.value as AppRoute)}>{(['dashboard', 'receipts', 'expenses', 'reports'] as AppRoute[]).map((route) => <option key={route} value={route}>{t(`nav.${route}`)}</option>)}</select></label>
-                    <label><span>{t('settings.defaultReceiptPayment')}</span><select value={preferences.receiptPaymentType} onChange={(event) => updatePreference('receiptPaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
-                    <label><span>{t('settings.defaultExpensePayment')}</span><select value={preferences.expensePaymentType} onChange={(event) => updatePreference('expensePaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
-                  </div>
                 </section>
                 <section className="route-card settings-card install-card">
                   <h3>{t('settings.install')}</h3>
@@ -1356,18 +1473,17 @@ function App() {
                   )}
                   <small className="offline-save-note">{t('settings.offlineNote')}</small>
                 </section>
-                <section className="route-card settings-card data-status-card">
-                  <h3>{t('settings.dataStatus')}</h3>
-                  <p>{t('settings.dataStatusCopy')}</p>
-                  <dl><div><dt>{t('settings.receipts')}</dt><dd>{managementReceipts.length}</dd></div><div><dt>{t('settings.expenses')}</dt><dd>{expenses.length}</dd></div><div><dt>{t('settings.lastReceipt')}</dt><dd>{managementReceipts.at(-1)?.receiptNumber ?? '—'}</dd></div><div><dt>{t('settings.connection')}</dt><dd className={isDatabaseConnected ? 'connection-online' : isDatabaseConnected === false ? 'connection-offline' : ''}><i />{isDatabaseConnected === null ? t('connection.connecting') : isDatabaseConnected ? t('connection.online') : t('connection.offline')}</dd></div></dl>
+                <section className="route-card settings-card preferences-card settings-wide">
+                  <h3>{t('settings.preferences')}</h3>
+                  <p>{t('settings.preferencesCopy')}</p>
+                  <div className="settings-preferences-grid">
+                    <label><span>{t('settings.defaultPage')}</span><select value={preferences.defaultRoute} onChange={(event) => updatePreference('defaultRoute', event.target.value as AppRoute)}>{(['dashboard', 'receipts', 'expenses', 'reports'] as AppRoute[]).map((route) => <option key={route} value={route}>{t(`nav.${route}`)}</option>)}</select></label>
+                    <label><span>{t('settings.defaultReceiptPayment')}</span><select value={preferences.receiptPaymentType} onChange={(event) => updatePreference('receiptPaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
+                    <label><span>{t('settings.defaultExpensePayment')}</span><select value={preferences.expensePaymentType} onChange={(event) => updatePreference('expensePaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
+                  </div>
                 </section>
-                <section className="route-card settings-card">
-                  <h3>{t('settings.operator')}</h3>
-                  <p>{t('settings.operatorCopy')}</p>
-                  <dl><div><dt>{t('settings.name')}</dt><dd>Mangesh</dd></div><div><dt>{t('settings.financialYear')}</dt><dd>{financialYear}</dd></div><div><dt>{t('settings.database')}</dt><dd><i /> Firebase Realtime Database</dd></div></dl>
-                </section>
-                <section className="route-card settings-card backup-card settings-wide"><h3>{t('settings.backup')}</h3><p>{t('settings.backupCopy')}</p><div className="settings-action-row"><button type="button" onClick={downloadBackup}>{t('settings.downloadBackup')}</button><button type="button" className="secondary-setting-button" onClick={() => void loadManagementData()}>{t('settings.refresh')}</button><button type="button" className="secondary-setting-button" onClick={() => navigateTo('reports')}>{t('settings.openReports')}</button></div></section>
-                <section className="route-card settings-card settings-wide"><h3>{t('settings.organization')}</h3><p>{t('header.organization')}</p><small>{t('settings.organizationCopy')}</small></section>
+                <section className="route-card settings-card backup-card"><h3>{t('settings.backup')}</h3><p>{t('settings.backupCopy')}</p><div className="settings-action-row"><button type="button" onClick={downloadBackup}>{t('settings.downloadBackup')}</button><button type="button" className="secondary-setting-button" onClick={() => void loadManagementData()}>{t('settings.refresh')}</button><button type="button" className="secondary-setting-button" onClick={() => navigateTo('reports')}>{t('settings.openReports')}</button></div></section>
+                <section className="route-card settings-card organization-card"><h3>{t('settings.organization')}</h3><p>{t('header.organization')}</p><small>{t('settings.organizationCopy')}</small></section>
               </div>
             </main>
           )}
@@ -1428,7 +1544,7 @@ function App() {
               <div><h2 id="excel-modal-title">{t('export.title')}</h2><p>{t('export.copy')}</p></div>
               <button type="button" onClick={() => setShowExcelExport(false)} aria-label={t('export.cancel')}>×</button>
             </div>
-            {isExcelLoading ? <div className="excel-loading"><div className="auth-loader" />{t('export.loading')}</div> : allReceipts.length === 0 ? (
+            {isExcelLoading ? <div className="excel-loading"><ListLoadingSkeleton /></div> : allReceipts.length === 0 ? (
               <p className="history-empty">{t('export.noRecords')}</p>
             ) : (
               <>

@@ -30,6 +30,7 @@ export default function DatePicker({ value, onChange, label, invalid = false }: 
   const selectedDate = parseDate(value)
   const today = new Date()
   const [isOpen, setIsOpen] = useState(false)
+  const [showYearSelection, setShowYearSelection] = useState(false)
   const [viewMonth, setViewMonth] = useState(() => startOfMonth(selectedDate ?? today))
   const pickerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -48,6 +49,10 @@ export default function DatePicker({ value, onChange, label, invalid = false }: 
       ...Array.from({ length: daysInMonth }, (_, index) => new Date(viewMonth.getFullYear(), viewMonth.getMonth(), index + 1)),
     ]
   }, [viewMonth])
+  const yearOptions = useMemo(
+    () => Array.from({ length: 12 }, (_, index) => viewMonth.getFullYear() - 5 + index),
+    [viewMonth],
+  )
 
   useEffect(() => {
     if (!isOpen) return
@@ -70,6 +75,7 @@ export default function DatePicker({ value, onChange, label, invalid = false }: 
 
   const openCalendar = () => {
     setViewMonth(startOfMonth(selectedDate ?? today))
+    setShowYearSelection(false)
     setIsOpen((current) => !current)
   }
 
@@ -92,23 +98,41 @@ export default function DatePicker({ value, onChange, label, invalid = false }: 
       {isOpen && (
         <div className="date-picker-popover" id={dialogId} role="dialog" aria-modal="false" aria-label={label}>
           <div className="date-picker-heading">
-            <button type="button" onClick={() => setViewMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} aria-label={t('datePicker.previousMonth')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
-            <strong>{new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(viewMonth)}</strong>
-            <button type="button" onClick={() => setViewMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} aria-label={t('datePicker.nextMonth')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
+            <button type="button" onClick={() => setViewMonth((current) => showYearSelection ? new Date(current.getFullYear() - 12, current.getMonth(), 1) : new Date(current.getFullYear(), current.getMonth() - 1, 1))} aria-label={t('datePicker.previousMonth')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
+            <div className="date-picker-current">
+              <span>{new Intl.DateTimeFormat(locale, { month: 'long' }).format(viewMonth)}</span>
+              <button className={showYearSelection ? 'active' : ''} type="button" onClick={() => setShowYearSelection((current) => !current)} aria-label={t('datePicker.selectYear')} aria-expanded={showYearSelection}>
+                {new Intl.NumberFormat(locale, { useGrouping: false }).format(viewMonth.getFullYear())}
+              </button>
+            </div>
+            <button type="button" onClick={() => setViewMonth((current) => showYearSelection ? new Date(current.getFullYear() + 12, current.getMonth(), 1) : new Date(current.getFullYear(), current.getMonth() + 1, 1))} aria-label={t('datePicker.nextMonth')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
           </div>
-          <div className="date-picker-weekdays" aria-hidden="true">{weekdays.map((weekday, index) => <span key={`${weekday}-${index}`}>{weekday}</span>)}</div>
-          <div className="date-picker-days">
-            {calendarDays.map((date, index) => date ? (
-              <button
-                key={toDateValue(date)}
-                type="button"
-                className={`${value === toDateValue(date) ? 'selected' : ''} ${toDateValue(today) === toDateValue(date) ? 'today' : ''}`.trim()}
-                onClick={() => selectDate(date)}
-                aria-label={new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(date)}
-                aria-pressed={value === toDateValue(date)}
-              >{new Intl.NumberFormat(locale, { useGrouping: false }).format(date.getDate())}</button>
-            ) : <span key={`empty-${index}`} />)}
-          </div>
+          {showYearSelection ? (
+            <div className="date-picker-years">
+              {yearOptions.map((year) => (
+                <button key={year} className={year === viewMonth.getFullYear() ? 'selected' : ''} type="button" onClick={() => {
+                  setViewMonth((current) => new Date(year, current.getMonth(), 1))
+                  setShowYearSelection(false)
+                }}>{new Intl.NumberFormat(locale, { useGrouping: false }).format(year)}</button>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="date-picker-weekdays" aria-hidden="true">{weekdays.map((weekday, index) => <span key={`${weekday}-${index}`}>{weekday}</span>)}</div>
+              <div className="date-picker-days">
+                {calendarDays.map((date, index) => date ? (
+                  <button
+                    key={toDateValue(date)}
+                    type="button"
+                    className={`${value === toDateValue(date) ? 'selected' : ''} ${toDateValue(today) === toDateValue(date) ? 'today' : ''}`.trim()}
+                    onClick={() => selectDate(date)}
+                    aria-label={new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(date)}
+                    aria-pressed={value === toDateValue(date)}
+                  >{new Intl.NumberFormat(locale, { useGrouping: false }).format(date.getDate())}</button>
+                ) : <span key={`empty-${index}`} />)}
+              </div>
+            </>
+          )}
           <button className="date-picker-today" type="button" onClick={() => selectDate(today)}>{t('datePicker.today')}</button>
         </div>
       )}

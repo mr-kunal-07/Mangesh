@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { APP_ROUTES, type AppRoute } from './appRoutes'
 
@@ -25,17 +26,17 @@ function NavigationButton({ route, activeRoute, onNavigate, compact = false }: {
   )
 }
 
-export function DesktopSidebar({ activeRoute, onNavigate }: { activeRoute: AppRoute; onNavigate: (route: AppRoute) => void }) {
+export const DesktopSidebar = memo(function DesktopSidebar({ activeRoute, onNavigate, onLogout }: { activeRoute: AppRoute; onNavigate: (route: AppRoute) => void; onLogout: () => void }) {
   const { t } = useTranslation()
   return (
     <aside className="management-sidebar">
       <nav aria-label={t('nav.primary')}>{APP_ROUTES.map((route) => <NavigationButton key={route} route={route} activeRoute={activeRoute} onNavigate={onNavigate} />)}</nav>
-      <div className="sidebar-footer"><i aria-hidden="true" /><div><strong>Mangesh</strong><small>{t('nav.operator')}</small></div></div>
+      <div className="sidebar-footer"><i aria-hidden="true" /><div><strong>Mangesh</strong><small>{t('nav.operator')}</small></div><button className="sidebar-logout-button" type="button" onClick={onLogout} aria-label={t('header.logout')} title={t('header.logout')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M14 8l4 4-4 4m4-4H9" /></svg></button></div>
     </aside>
   )
-}
+})
 
-export function MobileBottomNavigation({ activeRoute, onNavigate }: { activeRoute: AppRoute; onNavigate: (route: AppRoute) => void }) {
+export const MobileBottomNavigation = memo(function MobileBottomNavigation({ activeRoute, onNavigate }: { activeRoute: AppRoute; onNavigate: (route: AppRoute) => void }) {
   const { t } = useTranslation()
   return <nav className="mobile-bottom-nav" aria-label={t('nav.primary')}>{APP_ROUTES.map((route) => <NavigationButton key={route} route={route} activeRoute={activeRoute} onNavigate={onNavigate} compact />)}</nav>
-}
+})
