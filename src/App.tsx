@@ -983,7 +983,16 @@ function App() {
     }
   }
 
-  const shareReceiptImage = useCallback(async (receipt: ReceiptRecord, message: string): Promise<'shared' | 'downloaded'> => {
+  const shareReceiptImage = useCallback(async (receipt: ReceiptRecord, message: string): Promise<'shared' | 'text-only'> => {
+    const navigatorWithDeviceInfo = navigator as Navigator & { userAgentData?: { mobile?: boolean } }
+    const isMobileDevice = navigatorWithDeviceInfo.userAgentData?.mobile === true
+      || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+      || (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent))
+
+    if (!isMobileDevice || typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') {
+      return 'text-only'
+    }
+
     flushSync(() => setReceiptForDownload(receipt))
     try {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
@@ -993,7 +1002,7 @@ function App() {
       const filename = `receipt-${safeNumber}.jpg`
       const file = new File([image], filename, { type: 'image/jpeg' })
 
-      if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+      if (navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({ title: receipt.receiptNumber, text: message, files: [file] })
           return 'shared'
@@ -1002,14 +1011,7 @@ function App() {
           console.error(error)
         }
       }
-
-      const imageUrl = URL.createObjectURL(image)
-      const downloadLink = document.createElement('a')
-      downloadLink.href = imageUrl
-      downloadLink.download = filename
-      downloadLink.click()
-      window.setTimeout(() => URL.revokeObjectURL(imageUrl), 0)
-      return 'downloaded'
+      return 'text-only'
     } finally {
       setReceiptForDownload(null)
     }
@@ -1243,7 +1245,7 @@ function App() {
       setExcelMessage(t('export.downloadSuccess'))
     } catch (error) {
       console.error(error)
-      setExcelMessage(t('errors.generic'))
+      setExcelMessage(t('export.downloadError'))
     } finally {
       setIsExcelDownloading(false)
     }

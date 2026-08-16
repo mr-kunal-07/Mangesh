@@ -9,7 +9,6 @@ const exportPaymentLabels: Record<PaymentType, string> = {
 }
 
 let excelModulePromise: ReturnType<typeof importExcelModule> | null = null
-let templateBufferPromise: Promise<ArrayBuffer> | null = null
 
 function importExcelModule() {
   return import('exceljs')
@@ -20,17 +19,6 @@ function loadExcelModule() {
   return excelModulePromise
 }
 
-function loadTemplateBuffer() {
-  templateBufferPromise ??= fetch('/receipt-export-template.xlsx').then((response) => {
-    if (!response.ok) throw new Error('EXCEL_TEMPLATE_NOT_FOUND')
-    return response.arrayBuffer()
-  }).catch((error) => {
-    templateBufferPromise = null
-    throw error
-  })
-  return templateBufferPromise
-}
-
 function dateValue(value: string) {
   const [year, month, day] = value.split('-').map(Number)
   return new Date(year, month - 1, day)
@@ -39,25 +27,80 @@ function dateValue(value: string) {
 export async function buildReceiptWorkbook(receipts: ReceiptRecord[], language: AppLanguage) {
   if (receipts.length === 0) throw new Error('NO_RECEIPTS_TO_EXPORT')
 
-  const [ExcelJS, templateBuffer] = await Promise.all([loadExcelModule(), loadTemplateBuffer()])
-
+  const ExcelJS = await loadExcelModule()
   const workbook = new ExcelJS.Workbook()
-  await workbook.xlsx.load(templateBuffer.slice(0))
-  const worksheet = workbook.getWorksheet('Receipt Register')
-  if (!worksheet) throw new Error('EXCEL_TEMPLATE_SHEET_NOT_FOUND')
+  const worksheet = workbook.addWorksheet('Receipt Register', {
+    views: [{ state: 'frozen', ySplit: 7 }],
+    properties: { defaultRowHeight: 21 },
+  })
+
+  worksheet.columns = [
+    { key: 'sequence', width: 8 },
+    { key: 'receiptNumber', width: 24 },
+    { key: 'paymentDate', width: 14 },
+    { key: 'name', width: 28 },
+    { key: 'mobile', width: 17 },
+    { key: 'paymentType', width: 25 },
+    { key: 'amount', width: 15 },
+    { key: 'reference', width: 24 },
+    { key: 'createdBy', width: 16 },
+  ]
+
+  worksheet.mergeCells('A1:I1')
+  worksheet.getCell('A1').value = 'ॐ साईनाथ सेवा मंडळ, रजि. / Om Sainath Seva Mandal, Regd.'
+  worksheet.getCell('A1').font = { name: 'Aptos Display', size: 17, bold: true, color: { argb: 'FFFFFFFF' } }
+  worksheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
+  worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF742C13' } }
+  worksheet.getRow(1).height = 31
+
+  worksheet.mergeCells('A2:I2')
+  worksheet.getCell('A2').value = language === 'mr' ? 'पावती नोंदवही / Receipt Register' : 'Receipt Register / पावती नोंदवही'
+  worksheet.getCell('A2').font = { name: 'Aptos Display', size: 14, bold: true, color: { argb: 'FF742C13' } }
+  worksheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' }
+  worksheet.getRow(2).height = 27
+
+  worksheet.mergeCells('A3:I3')
+  worksheet.getCell('A3').value = `${language === 'mr' ? 'आर्थिक वर्ष' : 'Financial year'}: ${receipts[0].financialYear}`
+  worksheet.getCell('A3').font = { name: 'Aptos', size: 10, color: { argb: 'FF705A4F' } }
+  worksheet.getCell('A3').alignment = { horizontal: 'center', vertical: 'middle' }
+
+  const totalAmount = receipts.reduce((sum, receipt) => sum + Number(receipt.amount), 0)
+  worksheet.getCell('A5').value = language === 'mr' ? 'एकूण पावत्या' : 'Total receipts'
+  worksheet.getCell('B5').value = receipts.length
+  worksheet.getCell('D5').value = language === 'mr' ? 'एकूण रक्कम' : 'Total amount'
+  worksheet.getCell('E5').value = totalAmount
+  worksheet.getCell('E5').numFmt = '₹#,##0'
+  ;['A5', 'B5', 'D5', 'E5'].forEach((address) => {
+    const cell = worksheet.getCell(address)
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4E5D8' } }
+    cell.font = { name: 'Aptos', size: 10, bold: true, color: { argb: 'FF5E2A16' } }
+    cell.alignment = { vertical: 'middle', horizontal: address === 'B5' || address === 'E5' ? 'right' : 'left' }
+  })
+
+  const headerRow = worksheet.getRow(7)
+  headerRow.values = [
+    'Sr. / अ.क्र.',
+    'Receipt No. / पावती क्र.',
+    'Date / दिनांक',
+    'Name / नाव',
+    'WhatsApp Number',
+    'Payment type / पेमेंट प्रकार',
+    'Amount / रक्कम',
+    'Reference / व्यवहार क्र.',
+    'Created by / नोंद करणारे',
+  ]
+  headerRow.height = 27
+  headerRow.eachCell({ includeEmpty: true }, (cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8A3215' } }
+    cell.font = { name: 'Aptos', size: 10, bold: true, color: { argb: 'FFFFFFFF' } }
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FF742C13' } },
+      bottom: { style: 'thin', color: { argb: 'FF742C13' } },
+    }
+  })
 
   const dataStartRow = 8
-  const templateCapacity = 100
-  const templateTotalRow = 108
-
-  if (receipts.length < templateCapacity) {
-    worksheet.spliceRows(dataStartRow + receipts.length, templateCapacity - receipts.length)
-  } else if (receipts.length > templateCapacity) {
-    const extraRows = Array.from({ length: receipts.length - templateCapacity }, () =>
-      Array.from({ length: 9 }, () => null),
-    )
-    worksheet.insertRows(templateTotalRow, extraRows, 'i')
-  }
 
   receipts.forEach((receipt, index) => {
     const row = worksheet.getRow(dataStartRow + index)
@@ -87,9 +130,10 @@ export async function buildReceiptWorkbook(receipts: ReceiptRecord[], language: 
 
   const lastDataRow = dataStartRow + receipts.length - 1
   const totalRowNumber = lastDataRow + 1
-  const totalAmount = receipts.reduce((sum, receipt) => sum + Number(receipt.amount), 0)
   const totalRow = worksheet.getRow(totalRowNumber)
-  totalRow.getCell(1).value = 'TOTAL / एकूण'
+  worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 6)
+  totalRow.getCell(1).value = language === 'mr' ? 'एकूण / TOTAL' : 'TOTAL / एकूण'
+  totalRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' }
   totalRow.getCell(7).value = { formula: `SUM(G${dataStartRow}:G${lastDataRow})`, result: totalAmount }
   totalRow.height = 24
   totalRow.eachCell({ includeEmpty: true }, (cell) => {
@@ -103,9 +147,6 @@ export async function buildReceiptWorkbook(receipts: ReceiptRecord[], language: 
   totalRow.getCell(7).numFmt = '₹#,##0'
   totalRow.getCell(7).alignment = { horizontal: 'right', vertical: 'middle' }
 
-  worksheet.getCell('A5').value = { formula: `COUNTA(B${dataStartRow}:B${lastDataRow})`, result: receipts.length }
-  worksheet.getCell('D5').value = { formula: `SUM(G${dataStartRow}:G${lastDataRow})`, result: totalAmount }
-  worksheet.getCell('D5').numFmt = '₹#,##0'
   worksheet.autoFilter = { from: 'A7', to: `I${lastDataRow}` }
   worksheet.pageSetup = {
     orientation: 'landscape',
@@ -114,6 +155,7 @@ export async function buildReceiptWorkbook(receipts: ReceiptRecord[], language: 
     fitToHeight: 0,
     paperSize: 9,
     margins: { left: 0.25, right: 0.25, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
+    printArea: `A1:I${totalRowNumber}`,
   }
   worksheet.headerFooter = {
     oddFooter: language === 'mr'

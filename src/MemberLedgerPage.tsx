@@ -99,7 +99,7 @@ export default function MemberLedgerPage({
   paymentLabels: Record<PaymentType, string>
   toAmountWords: (amount: number) => string
   onViewReceipt: (receipt: ReceiptRecord) => void
-  onShareReceipt: (receipt: ReceiptRecord, message: string) => Promise<'shared' | 'downloaded'>
+  onShareReceipt: (receipt: ReceiptRecord, message: string) => Promise<'shared' | 'text-only'>
   onOpenCollections: () => void
 }) {
   const { t, i18n } = useTranslation()
@@ -283,7 +283,7 @@ export default function MemberLedgerPage({
     setShareFeedback('')
     try {
       const result = await onShareReceipt(receipt, message)
-      if (result === 'downloaded') {
+      if (result === 'text-only') {
         window.open(`https://wa.me/91${selectedSummary.member.mobile}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer')
         setShareFeedback(t('memberLedger.shareFallback'))
       } else {

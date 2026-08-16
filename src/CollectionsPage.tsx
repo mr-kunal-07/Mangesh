@@ -131,7 +131,7 @@ export default function CollectionsPage({
   paymentLabels: Record<PaymentType, string>
   toAmountWords: (amount: number) => string
   onReceiptCreated: () => Promise<void> | void
-  onShareReceipt: (receipt: ReceiptRecord, message: string) => Promise<'shared' | 'downloaded'>
+  onShareReceipt: (receipt: ReceiptRecord, message: string) => Promise<'shared' | 'text-only'>
   onOpenReceipts: () => void
 }) {
   const { t, i18n } = useTranslation()
@@ -405,7 +405,7 @@ export default function CollectionsPage({
     setShareFeedback('')
     try {
       const result = await onShareReceipt(target.receipt, shareMessage)
-      if (result === 'downloaded') {
+      if (result === 'text-only') {
         window.open(`https://wa.me/91${target.mobile}?text=${encodeURIComponent(shareMessage)}`, '_blank', 'noopener,noreferrer')
         setShareFeedback(t('collections.shareFallback'))
       } else {
