@@ -6,6 +6,9 @@ import receiptTemplate from './assets/receipt-template-optimized.jpeg'
 import LanguageSwitcher from './LanguageSwitcher'
 import ThemeSwitcher from './ThemeSwitcher'
 import DatePicker from './DatePicker'
+import CollectionsPage from './CollectionsPage'
+import MemberLedgerPage from './MemberLedgerPage'
+import { getCollectionData } from './collectionService'
 import type { AppLanguage } from './i18n'
 import { downloadReceiptWorkbook } from './excelExport'
 import { DesktopSidebar, MobileBottomNavigation } from './Navigation'
@@ -307,14 +310,6 @@ function formatReceiptDate(value: string) {
   return `${day}/${month}/${year}`
 }
 
-function formatRecordTimestamp(value: number, language: AppLanguage) {
-  if (!value) return '—'
-  return new Intl.DateTimeFormat(language === 'mr' ? 'mr-IN' : 'en-IN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value))
-}
-
 function formatAmount(value: string) {
   const amount = Number(value)
   if (!Number.isFinite(amount)) return '₹ 0'
@@ -437,22 +432,21 @@ const ExpenseVoucherDocument = memo(forwardRef<HTMLElement, ExpenseVoucherDocume
   )
 }))
 
-function importPdfDependencies() {
-  return Promise.all([
-    import('html2canvas'),
-    import('jspdf'),
-  ])
+let html2CanvasPromise: Promise<typeof import('html2canvas')> | null = null
+let jsPdfPromise: Promise<typeof import('jspdf')> | null = null
+
+function loadHtml2Canvas() {
+  html2CanvasPromise ??= import('html2canvas')
+  return html2CanvasPromise
 }
 
-let pdfDependenciesPromise: ReturnType<typeof importPdfDependencies> | null = null
-
-function loadPdfDependencies() {
-  pdfDependenciesPromise ??= importPdfDependencies()
-  return pdfDependenciesPromise
+function loadJsPdf() {
+  jsPdfPromise ??= import('jspdf')
+  return jsPdfPromise
 }
 
-async function createReceiptPdf(element: HTMLElement) {
-  const [{ default: html2canvas }, { jsPDF }] = await loadPdfDependencies()
+async function createReceiptCanvas(element: HTMLElement) {
+  const { default: html2canvas } = await loadHtml2Canvas()
   await document.fonts.ready
   const images = Array.from(element.querySelectorAll('img'))
   await Promise.all(
@@ -466,20 +460,35 @@ async function createReceiptPdf(element: HTMLElement) {
     ),
   )
 
-  const canvas = await html2canvas(element, {
+  return html2canvas(element, {
     scale: window.devicePixelRatio > 1 ? 2.2 : 2,
     useCORS: true,
     backgroundColor: '#fffdf7',
     logging: false,
     imageTimeout: 20_000,
   })
+}
+
+async function createReceiptPdf(element: HTMLElement) {
+  const [{ jsPDF }, canvas] = await Promise.all([loadJsPdf(), createReceiptCanvas(element)])
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
   pdf.addImage(canvas.toDataURL('image/jpeg', 0.93), 'JPEG', 0, 0, 210, 297)
   return pdf
 }
 
-const AppHeader = memo(function AppHeader({ user, onLogout }: { user: User | null; onLogout: () => void }) {
+async function createReceiptImage(element: HTMLElement) {
+  const canvas = await createReceiptCanvas(element)
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('SHARE_RECEIPT_IMAGE_FAILED'))
+    }, 'image/jpeg', 0.93)
+  })
+}
+
+const AppHeader = memo(function AppHeader({ user, activeRoute, onLogout, onOpenSettings }: { user: User | null; activeRoute?: AppRoute; onLogout: () => void; onOpenSettings?: () => void }) {
   const { t } = useTranslation()
+  const showLogout = activeRoute === 'settings'
   return (
     <header className="app-header">
       <div className="header-brand">
@@ -497,8 +506,10 @@ const AppHeader = memo(function AppHeader({ user, onLogout }: { user: User | nul
         <LanguageSwitcher />
         {user && (
           <div className="operator-actions">
-            <button className="logout-icon-button" type="button" onClick={onLogout} aria-label={t('header.logout')} title={t('header.logout')}>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M14 8l4 4-4 4m4-4H9" /></svg>
+            <button className="mobile-header-action-button" type="button" onClick={showLogout ? onLogout : (onOpenSettings ?? NOOP)} aria-label={showLogout ? t('header.logout') : t('nav.settings')} title={showLogout ? t('header.logout') : t('nav.settings')}>
+              {showLogout
+                ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M14 8l4 4-4 4m4-4H9" /></svg>
+                : <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.38.35.72.64 1 .29.28.67.42 1.07.4H21v4h-.1A1.7 1.7 0 0 0 19.4 15Z" /></svg>}
             </button>
           </div>
         )}
@@ -596,6 +607,9 @@ function App() {
       : numberToMarathiWords(Number(expenseForm.amount || 0)),
     [expenseForm.amount, language],
   )
+  const collectionAmountToWords = useCallback((amount: number) => (
+    language === 'en' ? numberToEnglishWords(amount) : numberToMarathiWords(amount)
+  ), [language])
   const paymentLabels = useMemo<Record<PaymentType, string>>(() => ({
     cash: t('payment.cash'), upi: t('payment.upi'), bank: t('payment.bank'), cheque: t('payment.cheque'),
   }), [t])
@@ -726,15 +740,24 @@ function App() {
     setPreferences(next)
   }
 
-  const downloadBackup = () => {
-    const backup = {
-      application: 'Om Sainath Seva Mandal Management',
-      version: 1,
-      generatedAt: new Date().toISOString(),
-      receipts: managementReceipts,
-      expenses,
+  const downloadBackup = async () => {
+    try {
+      const collectionData = await getCollectionData()
+      const backup = {
+        application: 'Om Sainath Seva Mandal Management',
+        version: 2,
+        generatedAt: new Date().toISOString(),
+        receipts: managementReceipts,
+        expenses,
+        members: collectionData.members,
+        collections: collectionData.contributions,
+        collectionPayments: collectionData.payments,
+      }
+      downloadTextFile(`sainath-backup-${todayForInput()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8')
+    } catch (error) {
+      console.error(error)
+      setManagementError(firebaseErrorMessage(error, (key) => t(key)))
     }
-    downloadTextFile(`sainath-backup-${todayForInput()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8')
   }
 
   const downloadTransactionsCsv = () => {
@@ -936,6 +959,11 @@ function App() {
     void loadHistoryPage(nextPage, historyNextCursor)
   }
 
+  const handleCollectionReceiptCreated = useCallback(async () => {
+    setHistoryCursors([undefined])
+    await Promise.all([loadHistoryPage(1), loadManagementData()])
+  }, [loadHistoryPage, loadManagementData])
+
   const downloadSavedReceipt = async (receipt: ReceiptRecord) => {
     setRecordDownloadId(receipt.id)
     setRecordDownloadError('')
@@ -954,6 +982,38 @@ function App() {
       setRecordDownloadId(null)
     }
   }
+
+  const shareReceiptImage = useCallback(async (receipt: ReceiptRecord, message: string): Promise<'shared' | 'downloaded'> => {
+    flushSync(() => setReceiptForDownload(receipt))
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      if (!savedReceiptRef.current) throw new Error('SHARE_RECEIPT_RENDER_FAILED')
+      const image = await createReceiptImage(savedReceiptRef.current)
+      const safeNumber = receipt.receiptNumber.replace(/[^a-zA-Z0-9-]/g, '-')
+      const filename = `receipt-${safeNumber}.jpg`
+      const file = new File([image], filename, { type: 'image/jpeg' })
+
+      if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ title: receipt.receiptNumber, text: message, files: [file] })
+          return 'shared'
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error
+          console.error(error)
+        }
+      }
+
+      const imageUrl = URL.createObjectURL(image)
+      const downloadLink = document.createElement('a')
+      downloadLink.href = imageUrl
+      downloadLink.download = filename
+      downloadLink.click()
+      window.setTimeout(() => URL.revokeObjectURL(imageUrl), 0)
+      return 'downloaded'
+    } finally {
+      setReceiptForDownload(null)
+    }
+  }, [])
 
   const updateField = <K extends keyof ReceiptForm>(field: K, value: ReceiptForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }))
@@ -1239,7 +1299,7 @@ function App() {
 
   return (
     <div className="app-shell management-shell">
-      <AppHeader user={authUser} onLogout={handleLogout} />
+      <AppHeader user={authUser} activeRoute={activeRoute} onLogout={handleLogout} onOpenSettings={() => navigateTo('settings')} />
       <div className="management-body">
         <DesktopSidebar activeRoute={activeRoute} onNavigate={navigateTo} onLogout={handleLogout} />
         <div className="management-main">
@@ -1263,6 +1323,27 @@ function App() {
               </div>
             </main>
           )}
+
+          {activeRoute === 'collections' && <CollectionsPage
+            financialYear={financialYear}
+            authUser={authUser}
+            receipts={managementReceipts}
+            paymentLabels={paymentLabels}
+            toAmountWords={collectionAmountToWords}
+            onReceiptCreated={handleCollectionReceiptCreated}
+            onShareReceipt={shareReceiptImage}
+            onOpenReceipts={() => navigateTo('receipts')}
+          />}
+
+          {activeRoute === 'members' && <MemberLedgerPage
+            financialYear={financialYear}
+            receipts={managementReceipts}
+            paymentLabels={paymentLabels}
+            toAmountWords={collectionAmountToWords}
+            onViewReceipt={setViewReceipt}
+            onShareReceipt={shareReceiptImage}
+            onOpenCollections={() => navigateTo('collections')}
+          />}
 
           {activeRoute === 'receipts' && <main className="workspace">
         <div className="left-column">
@@ -1477,12 +1558,12 @@ function App() {
                   <h3>{t('settings.preferences')}</h3>
                   <p>{t('settings.preferencesCopy')}</p>
                   <div className="settings-preferences-grid">
-                    <label><span>{t('settings.defaultPage')}</span><select value={preferences.defaultRoute} onChange={(event) => updatePreference('defaultRoute', event.target.value as AppRoute)}>{(['dashboard', 'receipts', 'expenses', 'reports'] as AppRoute[]).map((route) => <option key={route} value={route}>{t(`nav.${route}`)}</option>)}</select></label>
+                    <label><span>{t('settings.defaultPage')}</span><select value={preferences.defaultRoute} onChange={(event) => updatePreference('defaultRoute', event.target.value as AppRoute)}>{(['dashboard', 'collections', 'members', 'receipts', 'expenses', 'reports'] as AppRoute[]).map((route) => <option key={route} value={route}>{t(`nav.${route}`)}</option>)}</select></label>
                     <label><span>{t('settings.defaultReceiptPayment')}</span><select value={preferences.receiptPaymentType} onChange={(event) => updatePreference('receiptPaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
                     <label><span>{t('settings.defaultExpensePayment')}</span><select value={preferences.expensePaymentType} onChange={(event) => updatePreference('expensePaymentType', event.target.value as PaymentType)}>{(Object.keys(paymentLabels) as PaymentType[]).map((paymentType) => <option key={paymentType} value={paymentType}>{paymentLabels[paymentType]}</option>)}</select></label>
                   </div>
                 </section>
-                <section className="route-card settings-card backup-card"><h3>{t('settings.backup')}</h3><p>{t('settings.backupCopy')}</p><div className="settings-action-row"><button type="button" onClick={downloadBackup}>{t('settings.downloadBackup')}</button><button type="button" className="secondary-setting-button" onClick={() => void loadManagementData()}>{t('settings.refresh')}</button><button type="button" className="secondary-setting-button" onClick={() => navigateTo('reports')}>{t('settings.openReports')}</button></div></section>
+                <section className="route-card settings-card backup-card"><h3>{t('settings.backup')}</h3><p>{t('settings.backupCopy')}</p><div className="settings-action-row"><button type="button" onClick={() => void downloadBackup()}>{t('settings.downloadBackup')}</button><button type="button" className="secondary-setting-button" onClick={() => void loadManagementData()}>{t('settings.refresh')}</button><button type="button" className="secondary-setting-button" onClick={() => navigateTo('reports')}>{t('settings.openReports')}</button></div></section>
                 <section className="route-card settings-card organization-card"><h3>{t('settings.organization')}</h3><p>{t('header.organization')}</p><small>{t('settings.organizationCopy')}</small></section>
               </div>
             </main>
@@ -1510,7 +1591,7 @@ function App() {
 
       {viewReceipt && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setViewReceipt(null)}>
-          <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="view-receipt-title" onMouseDown={(event) => event.stopPropagation()}>
+          <section className="record-modal record-receipt-modal" role="dialog" aria-modal="true" aria-labelledby="view-receipt-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="record-modal-heading">
               <div className="record-modal-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.75" /></svg>
@@ -1518,17 +1599,18 @@ function App() {
               <div><h2 id="view-receipt-title">{t('record.details')}</h2><p>{viewReceipt.receiptNumber}</p></div>
               <button type="button" onClick={() => setViewReceipt(null)} aria-label={t('record.close')}>×</button>
             </div>
-            <dl className="record-details-grid">
-              <div><dt>{t('record.name')}</dt><dd>{viewReceipt.name}</dd></div>
-              <div><dt>{t('record.mobile')}</dt><dd>{viewReceipt.mobile}</dd></div>
-              <div><dt>{t('record.paymentType')}</dt><dd>{paymentLabels[viewReceipt.paymentType]}</dd></div>
-              <div><dt>{t('record.paymentDate')}</dt><dd>{formatReceiptDate(viewReceipt.paymentDate)}</dd></div>
-              <div><dt>{t('record.amount')}</dt><dd>₹ {Number(viewReceipt.amount).toLocaleString('en-IN')}</dd></div>
-              <div><dt>{t('record.reference')}</dt><dd>{viewReceipt.reference || '—'}</dd></div>
-              <div className="record-detail-wide"><dt>{t('record.amountWords')}</dt><dd>{viewReceipt.amountInWords}</dd></div>
-              <div><dt>{t('record.createdBy')}</dt><dd>{viewReceipt.createdByName}</dd></div>
-              <div><dt>{t('record.createdAt')}</dt><dd>{formatRecordTimestamp(viewReceipt.createdAt, language)}</dd></div>
-            </dl>
+            <div className="record-receipt-frame">
+              <ReceiptDocument
+                receiptNumber={viewReceipt.receiptNumber}
+                name={viewReceipt.name}
+                mobile={viewReceipt.mobile}
+                paymentTypeLabel={paymentLabels[viewReceipt.paymentType]}
+                paymentDate={viewReceipt.paymentDate}
+                amount={viewReceipt.amount}
+                reference={viewReceipt.reference}
+                amountInWords={viewReceipt.amountInWords}
+              />
+            </div>
             <div className="record-modal-actions">
               <button type="button" className="secondary-button" onClick={() => setViewReceipt(null)}>{t('record.close')}</button>
             </div>

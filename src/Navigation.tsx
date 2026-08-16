@@ -2,8 +2,12 @@ import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { APP_ROUTES, type AppRoute } from './appRoutes'
 
+const MOBILE_ROUTES = APP_ROUTES.filter((route) => route !== 'settings')
+
 function RouteIcon({ route }: { route: AppRoute }) {
   if (route === 'dashboard') return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
+  if (route === 'collections') return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3.5 19v-1.5A4.5 4.5 0 0 1 8 13h2a4.5 4.5 0 0 1 4.5 4.5V19" /><circle cx="17" cy="8" r="2.2" /><path d="M16 13.2h1a3.5 3.5 0 0 1 3.5 3.5V19" /></svg>
+  if (route === 'members') return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3.5 20v-1.5A4.5 4.5 0 0 1 8 14h2a4.5 4.5 0 0 1 4.5 4.5V20" /><path d="M16 5h5M18.5 2.5v5M16 12h5M16 16h5" /></svg>
   if (route === 'receipts') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" /><path d="M9 8h6M9 12h6M9 16h3" /></svg>
   if (route === 'expenses') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v12H4z" /><path d="M4 10h16M16 15h2" /><path d="M7 7V5h10v2" /></svg>
   if (route === 'reports') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V10M12 21V3M19 21v-7" /><path d="M3 21h18" /></svg>
@@ -38,5 +42,5 @@ export const DesktopSidebar = memo(function DesktopSidebar({ activeRoute, onNavi
 
 export const MobileBottomNavigation = memo(function MobileBottomNavigation({ activeRoute, onNavigate }: { activeRoute: AppRoute; onNavigate: (route: AppRoute) => void }) {
   const { t } = useTranslation()
-  return <nav className="mobile-bottom-nav" aria-label={t('nav.primary')}>{APP_ROUTES.map((route) => <NavigationButton key={route} route={route} activeRoute={activeRoute} onNavigate={onNavigate} compact />)}</nav>
+  return <nav className="mobile-bottom-nav" aria-label={t('nav.primary')}>{MOBILE_ROUTES.map((route) => <NavigationButton key={route} route={route} activeRoute={activeRoute} onNavigate={onNavigate} compact />)}</nav>
 })

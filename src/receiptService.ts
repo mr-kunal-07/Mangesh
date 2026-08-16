@@ -55,6 +55,7 @@ export type ReceiptPage = {
 const OPERATOR_ID = 'Mangesh'
 const OPERATOR_EMAIL = 'mangesh@thesamplebee.app'
 const ROOT_PATH = 'receiptSystem'
+const RECEIPT_PREFIX = 'OSSM'
 
 export function observeAuth(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback)
@@ -80,7 +81,7 @@ export function getFinancialYear(date = new Date()) {
 }
 
 export function formatReceiptNumber(financialYear: string, sequence: number) {
-  return `OSM/${financialYear}/${String(sequence).padStart(6, '0')}`
+  return `${RECEIPT_PREFIX}/${financialYear}/${String(sequence).padStart(6, '0')}`
 }
 
 function counterReference(financialYear: string) {

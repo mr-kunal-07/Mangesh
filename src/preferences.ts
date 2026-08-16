@@ -15,7 +15,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   expensePaymentType: 'cash',
 }
 
-const validRoutes: AppRoute[] = ['dashboard', 'receipts', 'expenses', 'reports', 'settings']
+const validRoutes: AppRoute[] = ['dashboard', 'collections', 'members', 'receipts', 'expenses', 'reports', 'settings']
 const validPaymentTypes: PaymentType[] = ['cash', 'upi', 'bank', 'cheque']
 
 export function getSavedPreferences(): AppPreferences {
